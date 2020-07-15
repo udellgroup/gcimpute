@@ -1,4 +1,4 @@
-from transforms.online_non_gaussian_transform_function import OnlineNonGaussianTransformFunction
+from transforms.online_transform_function import OnlineTransformFunction
 from scipy.stats import norm, truncnorm
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
@@ -91,7 +91,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
 
 class OnlineExpectationMaximization():
     def __init__(self, cont_indices, ord_indices):
-        self.transform_function = OnlineNonGaussianTransformFunction(cont_indices, ord_indices)
+        self.transform_function = OnlineTransformFunction(cont_indices, ord_indices)
         self.cont_indices = cont_indices
         self.ord_indices = ord_indices
         # we assume boolean array of indices
