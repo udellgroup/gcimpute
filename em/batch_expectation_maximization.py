@@ -91,7 +91,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
     return C, Z_imp_row, Z_row
 
 class BatchExpectationMaximization():
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=None, batch_size=64, num_ord_updates=2):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=None, max_ord=100, batch_size=64, num_ord_updates=2):
         """
         Fits a Gaussian Copula and imputes missing values in X.
         Args:
@@ -101,6 +101,7 @@ class BatchExpectationMaximization():
             threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
             max_iter (int): the maximum number of iterations for copula estimation
             max_workers: the maximum number of workers for parallelism 
+            max_ord: maximum number of levels in any ordinal for detection of ordinal indices
             batch_size: the number of elements to process in each iteration for copula update
             num_ord_updates: the number of times to re-estimate the latent ordinals per batch
         Returns:
