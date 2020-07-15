@@ -91,7 +91,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
     return C, Z_imp_row, Z_row
 
 class BatchExpectationMaximization():
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.0001, max_iter=100, max_workers=None, batch_size=64, num_ord_updates=2):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=None, batch_size=64, num_ord_updates=2):
         """
         Fits a Gaussian Copula and imputes missing values in X.
         Args:

@@ -91,7 +91,7 @@ class ExpectationMaximization():
     def __init__(self):
         return
 
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=10000, max_workers=None):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=None):
         """
         Fits a Gaussian Copula and imputes missing values in X.
 
