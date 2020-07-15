@@ -228,9 +228,10 @@ class ExpectationMaximization():
         """
         Z_ord = np.empty(Z_ord_lower.shape)
         Z_ord[:] = np.nan
-        u_lower = norm.cdf(Z_ord_lower)
-        u_upper = norm.cdf(Z_ord_upper)
-        # sample from uniform distribution, preserving nans in from u_lower in Z_ord
+        u_lower = np.copy(Z_ord_lower)
+        u_lower[~np.isnan(Z_ord_lower)] = norm.cdf(Z_ord_lower[~np.isnan(Z_ord_lower)])
+        u_upper = np.copy(Z_ord_upper)
+        u_upper[~np.isnan(Z_ord_upper)] = norm.cdf(Z_ord_upper[~np.isnan(Z_ord_upper)])
         u_samples = np.random.uniform(u_lower[~np.isnan(u_lower)],u_upper[~np.isnan(u_lower)])
         # convert back from the uniform sample to the guassian sample in that interval
         Z_ord[~np.isnan(u_lower)] = norm.ppf(u_samples)
