@@ -100,7 +100,7 @@ class OnlineExpectationMaximization():
         # track what iteration the algorithm is on for use in weighting samples
         self.iteration = 1
 
-    def partial_fit_and_predict(self, X_batch, max_workers=None, max_ord=100, num_ord_updates=2):
+    def partial_fit_and_predict(self, X_batch, max_workers=None, num_ord_updates=2):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -108,7 +108,6 @@ class OnlineExpectationMaximization():
         Args:
             X_batch (matrix): data matrix with entries to use to update copula and be imputed
             max_workers: the maximum number of workers for parallelism 
-            max_ord: maximum number of levels in any ordinal for detection of ordinal indices
             num_ord_updates: the number of times to re-estimate the latent ordinals per batch
         Returns:
             X_imp (matrix): X_batch with missing values imputed

@@ -110,7 +110,7 @@ class BatchExpectationMaximization():
         """
         if cont_indices is None and ord_indices is None:
             # guess the indices from the data
-            cont_indices = self.get_cont_indices(X)
+            cont_indices = self.get_cont_indices(X, max_ord=max_ord)
             ord_indices = ~cont_indices
         self.transform_function = TransformFunction(X, cont_indices, ord_indices)
         sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers, batch_size, num_ord_updates)
@@ -245,7 +245,7 @@ class BatchExpectationMaximization():
         """
         return np.linalg.norm(sigma - prev_sigma) / np.linalg.norm(sigma)
 
-    def get_cont_indices(self, X, max_ord=100):
+    def get_cont_indices(self, X, max_ord):
         """
         get's the indices of continuos columns by returning
         those indicies which have at least max_ord distinct values

@@ -102,14 +102,14 @@ class ExpectationMaximization():
             threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
             max_iter (int): the maximum number of iterations for copula estimation
             max_workers: the maximum number of workers for parallelism
-
+            max_ord: maximum number of levels in any ordinal for detection of ordinal indices
         Returns:
             X_imp (matrix): X with missing values imputed
             sigma_rearragned (matrix): an estimate of the covariance of the copula
         """
         if cont_indices is None and ord_indices is None:
             # guess the indices from the data
-            cont_indices = self.get_cont_indices(X)
+            cont_indices = self.get_cont_indices(X, max_ord)
             ord_indices = ~cont_indices
         self.transform_function = TransformFunction(X, cont_indices, ord_indices)
         sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers)
@@ -142,7 +142,7 @@ class ExpectationMaximization():
             ord_indices (array): indices of the ordinal entries
             threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
             max_iter (int): the maximum number of iterations for copula estimation
-            max_workers: the maximum number of workers for parallelism 
+            max_workers (positive int): the maximum number of workers for parallelism 
 
         Returns:
             sigma (matrix): an estimate of the covariance of the copula
@@ -178,8 +178,20 @@ class ExpectationMaximization():
     def _em_step(self, Z, r_lower, r_upper, sigma, max_workers):
         """
         Executes one step of the EM algorithm to update the covariance 
-        of the copula. Also returns new estimates for the latent
-        values, imputed latent values, and log liklihood
+        of the copula
+
+        Args:
+            Z (matrix): Latent values
+            r_lower (matrix): lower bound on latent ordinals
+            r_upper (matrix): upper bound on latent ordinals
+            sigma (matrix): correlation estimate
+            max_workers (positive int): maximum number of workers for parallelism
+
+        Returns:
+            sigma (matrix): an estimate of the covariance of the copula
+            Z_imp (matrix): estimates of latent values
+            Z (matrix): Updated latent values
+
         """
         n = Z.shape[0]
         p = Z.shape[1]
@@ -251,7 +263,7 @@ class ExpectationMaximization():
 
         return np.linalg.norm(sigma - prev_sigma) / np.linalg.norm(sigma)
 
-    def get_cont_indices(self, X, max_ord=100):
+    def get_cont_indices(self, X, max_ord):
         """
         get's the indices of continuos columns by returning
         those indicies which have at least max_ord distinct values
