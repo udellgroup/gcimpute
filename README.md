@@ -13,4 +13,5 @@ Implements an approximate online expectation maximization algorithm for fitting 
 
 ## References
 [1] Zhao, Y. and Udell, M. Missing value imputation for mixeddata through gaussian copula, 2019.
+
 [2] Landgrebe, E., Zhao, Y., and Udell, M. Online Mixed Missing Value Imputation Using Gaussian Copula, 2020.
