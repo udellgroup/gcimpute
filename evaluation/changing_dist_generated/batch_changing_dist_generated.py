@@ -3,7 +3,6 @@ import numpy as np
 from evaluation.helpers import cont_to_binary, cont_to_ord, get_smae, get_rmse, get_scaled_error, mask_one_per_row
 from matplotlib import pyplot as plt
 from statsmodels.distributions.empirical_distribution import ECDF
-CASE = 0
 def get_stats_batch():
     NUM_RUNS = 10
     NUM_SAMPLES = 10000
@@ -13,6 +12,7 @@ def get_stats_batch():
     list_of_smaes = []
     list_of_rmses = []
     for i in range(NUM_RUNS):
+        print("starting epoch: " + str(i + 1))
         np.random.seed(i)
         sigma1 = np.array(
         [   

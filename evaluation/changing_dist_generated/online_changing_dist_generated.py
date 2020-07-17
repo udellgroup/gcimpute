@@ -13,6 +13,7 @@ def get_stats():
     list_of_rmses = []
     list_of_scaled_errors = []
     for i in range(NUM_RUNS):
+        print("starting epoch: " + str(i + 1))
         scaled_errors = []
         np.random.seed(i)
         sigma1 = np.array(
@@ -50,8 +51,6 @@ def get_stats():
         while i*BATCH_SIZE < X_masked.shape[0]:  
             X_imp_row, sigma_imp = oem.partial_fit_and_predict(X_masked[i*BATCH_SIZE:(i+1)*BATCH_SIZE,:])
             X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE,:] = X_imp_row
-            print("iteration is")
-            print(i)
             smae = get_smae(X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE,:], X[i*BATCH_SIZE:(i+1)*BATCH_SIZE,:], X_masked[i*BATCH_SIZE:(i+1)*BATCH_SIZE,:])
             i+=1
         smae = get_smae(X_imp, X, X_masked)

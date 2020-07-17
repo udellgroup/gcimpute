@@ -100,22 +100,23 @@ class OnlineExpectationMaximization():
         # track what iteration the algorithm is on for use in weighting samples
         self.iteration = 1
 
-    def partial_fit_and_predict(self, X_batch, max_workers=None, num_ord_updates=2):
+    def partial_fit_and_predict(self, X_batch, max_workers=None, num_ord_updates=2, decay_coef=0.1):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
 
         Args:
             X_batch (matrix): data matrix with entries to use to update copula and be imputed
-            max_workers: the maximum number of workers for parallelism 
-            num_ord_updates: the number of times to re-estimate the latent ordinals per batch
+            max_workers (positive int): the maximum number of workers for parallelism 
+            num_ord_updates (positive int): the number of times to re-estimate the latent ordinals per batch
+            decay_coef (float in (0,1)): tunes how much to weight new covariance estimates
         Returns:
             X_imp (matrix): X_batch with missing values imputed
             sigma_rearragned (matrix): an updated estimate of the covariance of the copula
         """
         # update marginals with the new batch
         self.transform_function.partial_fit(X_batch)
-        sigma, Z_batch_imp = self._fit_covariance(X_batch, max_workers, num_ord_updates)
+        sigma, Z_batch_imp = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef)
         # rearrange sigma so it corresponds to the column ordering of X
         sigma_rearranged = np.empty(sigma.shape)
         sigma_rearranged[np.ix_(self.ord_indices,self.ord_indices)] = sigma[:np.sum(self.ord_indices),:np.sum(self.ord_indices)]
@@ -136,7 +137,7 @@ class OnlineExpectationMaximization():
         X_imp[:,self.cont_indices] = X_imp_cont
         X_imp[:,self.ord_indices] = X_imp_ord
         return X_imp, sigma_rearranged
-    def _fit_covariance(self, X_batch, max_workers, num_ord_updates):
+    def _fit_covariance(self, X_batch, max_workers, num_ord_updates, decay_coef):
         """
         Updates the covariance matrix of the gaussian copula using the data 
         in X_batch and returns the imputed latent values corresponding to 
@@ -146,7 +147,7 @@ class OnlineExpectationMaximization():
             X_batch (matrix): data matrix with which to update copula and with entries to be imputed
             max_workers: the maximum number of workers for parallelism 
             num_ord_updates: the number of times to restimate the latent ordinals per batch
-
+            decay_coef (float in (0,1)): tunes how much to weight new covariance estimates
         Returns:
             sigma (matrix): an updated estimate of the covariance of the copula
             Z_imp (matrix): estimates of latent values in X_batch
@@ -182,7 +183,6 @@ class OnlineExpectationMaximization():
                 C += C_row/float(batch_size)
         sigma = np.cov(Z_imp, rowvar=False) + C
         sigma = self._project_to_correlation(sigma)
-        decay_coef = 0.1
         self.sigma = sigma*decay_coef + (1 - decay_coef)*prev_sigma
         prev_sigma = self.sigma
         self.iteration += 1
