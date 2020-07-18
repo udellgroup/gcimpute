@@ -7,8 +7,7 @@ setup(
     packages=['em', 'evaluation', 'transforms'],
     install_requires=[
         'numpy',
-        'scyipy',
-        'concurrent',
+        'scipy',
         'statsmodels'
     ],
 )
