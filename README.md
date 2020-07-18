@@ -1,6 +1,10 @@
 # online_mixed_gc_imp
 This package provides a python implemention of online, minibatch, and parallel implementations of Gaussian Copula Imputation.
 
+# Installation
+
+To install this package, clone the repo and run `python setup.py install`.
+
 ## ExpectationMaximization
 Implements an approximate expectation maximization algorithm for fitting a Guassian Copula to impute missing values that supports parallelism as in [1]. An example of usage can be found in evaluation/copula_generate/standard_copula_generated.py
 

@@ -1,7 +1,6 @@
 from em.batch_expectation_maximization import BatchExpectationMaximization
 import numpy as np
 from evaluation.helpers import cont_to_binary, cont_to_ord, get_smae, get_rmse, get_scaled_error, mask_one_per_row
-from matplotlib import pyplot as plt
 from statsmodels.distributions.empirical_distribution import ECDF
 def get_stats_batch():
     NUM_RUNS = 10

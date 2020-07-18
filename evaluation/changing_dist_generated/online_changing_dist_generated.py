@@ -1,7 +1,6 @@
 from em.online_expectation_maximization import OnlineExpectationMaximization
 import numpy as np
 from evaluation.helpers import cont_to_binary, cont_to_ord, get_smae, get_rmse, get_scaled_error, mask, mask_one_per_row
-from matplotlib import pyplot as plt
 from transforms.online_ordinal_marginal_estimator import OnlineOrdinalMarginalEstimator
 from statsmodels.distributions.empirical_distribution import ECDF
 
