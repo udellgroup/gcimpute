@@ -4,6 +4,7 @@ from evaluation.helpers import cont_to_binary, cont_to_ord, get_smae, get_rmse, 
 from transforms.online_ordinal_marginal_estimator import OnlineOrdinalMarginalEstimator
 from statsmodels.distributions.empirical_distribution import ECDF
 import time
+from scipy.stats import random_correlation, norm, expon
 
 
 def generate_sigma():
