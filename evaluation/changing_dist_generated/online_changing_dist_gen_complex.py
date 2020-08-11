@@ -7,13 +7,19 @@ import time
 from scipy.stats import random_correlation, norm, expon
 
 
-def generate_sigma():
+def generate_sigma(seed):
+    np.random.seed(seed)
     W = np.random.normal(size=(15, 15))
     covariance = np.matmul(W, W.T)
     D = np.diagonal(covariance)
     D_neg_half = np.diag(1.0/np.sqrt(D))
     return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
 
+def get_smae_types(X_imp, X, X_masked):
+    smae_cont = get_smae(X_imp[:, :5], X[:, :5], X_masked[:, :5])
+    smae_ord = get_smae(X_imp[:, 5:10], X[:, 5:10], X_masked[:, 5:10])
+    smae_bin = get_smae(X_imp[:, 10:], X[:, 10:], X_masked[:, 10:])
+    return (smae_cont, smae_ord, smae_bin)
 
 if __name__ == "__main__":
     # scaled_errors = []
@@ -21,16 +27,15 @@ if __name__ == "__main__":
     rmses = []
     runtimes = []
     NUM_RUNS = 10
-    NUM_SAMPLES = 10000
+    NUM_SAMPLES = 2000
     BATCH_SIZE = 50
     for i in range(1, NUM_RUNS+1):
-        np.random.seed(i)
         print("starting epoch: ", i, "\n")
         # scaled_errors = []
-        sigma1 = generate_sigma()
-        sigma2 = generate_sigma()
-        sigma3 = generate_sigma()
-        mean = np.array([0.0, 0.0, 0.0])
+        sigma1 = generate_sigma(3*i-2)
+        sigma2 = generate_sigma(3*i-1)
+        sigma3 = generate_sigma(3*i)
+        mean = np.zeros(sigma1.shape[0])
         X1 = np.random.multivariate_normal(mean, sigma1, size=NUM_SAMPLES)
         X2 = np.random.multivariate_normal(mean, sigma2, size=NUM_SAMPLES)
         X3 = np.random.multivariate_normal(mean, sigma3, size=NUM_SAMPLES)
