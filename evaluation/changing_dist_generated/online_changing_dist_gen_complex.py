@@ -24,7 +24,7 @@ def get_smae_types(X_imp, X, X_masked):
 if __name__ == "__main__":
     # scaled_errors = []
     smaes = []
-    rmses = []
+    # rmses = []
     runtimes = []
     NUM_RUNS = 10
     NUM_SAMPLES = 2000
@@ -76,10 +76,10 @@ if __name__ == "__main__":
         end_time = time.time()
         runtimes.append(end_time - start_time)
         smae = get_smae(X_imp, X, X_masked)
-        rmse = get_scaled_error(X_imp[:, :5], X[:, :5])
+        # rmse = get_scaled_error(X_imp[:, :5], X[:, :5])
         smaes.append(smae)
-        rmses.append(rmse)
-    mean_rmse = np.mean(rmses, axis=0)
+        # rmses.append(rmse)
+    # mean_rmse = np.mean(rmses, axis=0)
     mean_smae = np.mean(smaes, axis=0)
     # print("mean of scaled errors is: ")
     # print(np.mean(np.array(scaled_errors)))
@@ -102,10 +102,10 @@ if __name__ == "__main__":
     print("std dev ord smaes are: ")
     print(np.mean(std_dev_smaes[10:]))
     print("\n")
-    print("mean of rmses is: ")
-    print(np.mean(np.array(rmses), axis=0))
-    print("std deviation of rmses is: ")
-    print(np.std(np.array(rmses), axis=0))
-    print("\n")
+    # print("mean of rmses is: ")
+    # print(np.mean(np.array(rmses), axis=0))
+    # print("std deviation of rmses is: ")
+    # print(np.std(np.array(rmses), axis=0))
+    # print("\n")
     print("mean time for run is: ")
     print(np.mean(np.array(runtimes)))
