@@ -21,6 +21,22 @@ def get_smae_types(X_imp, X, X_masked):
     smae_bin = get_smae(X_imp[:, 10:], X[:, 10:], X_masked[:, 10:])
     return (smae_cont, smae_ord, smae_bin)
 
+def mask_types(X, mask_num):
+    """
+    Masks mask_fraction entries of the continuous, ordinal, and binary columns of X,
+    raising a value error if an entire row is masked
+    """
+    X_masked = np.copy(X)
+    mask_indices = []
+    for i in range(X_masked.shape[0]):
+        rand_idx = np.random.choice(5, 6)
+        for idx in rand_idx:
+            X_masked[i, rand_idx] = np.nan
+        mask_indices += [(i,j) for j in rand_idx[:5]]
+        mask_indices += [(i,j+5) for j in rand_idx[5:10]]
+        mask_indices += [(i,j+10) for j in rand_idx[10:]]
+    return X_masked, mask_indices
+
 if __name__ == "__main__":
     # scaled_errors = []
     smaes = []
@@ -56,8 +72,8 @@ if __name__ == "__main__":
         X[:, 14] = cont_to_ord(X[:, 14], k=5)
 
         # X_masked = mask_one_per_row(X)
-        MASK_FRACTION = 0.3
-        X_masked, mask_indices = mask(X, MASK_FRACTION)
+        MASK_FRACTION = 0.4
+        X_masked, mask_indices = mask_types(X, MASK_FRACTION)
         cont_indices = np.array([True, True, True, True, True, False,
                                  False, False, False, False, False, False, False, False, False])
         ord_indices = np.array([False, False, False, False, False,
