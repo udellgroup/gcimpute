@@ -29,13 +29,13 @@ def mask_types(X, mask_num):
     mask_indices = []
     for i in range(X_masked.shape[0]):
         rand_idx = np.random.choice(5, mask_num*3)
-        for idx in rand_idx[:2]:
+        for idx in rand_idx[:mask_num]:
             X_masked[i, idx] = np.nan
             mask_indices.append((i,idx))
-        for idx in rand_idx[:2]:
+        for idx in rand_idx[mask_num:2*mask_num]:
             X_masked[i, idx+5] = np.nan
             mask_indices.append((i,idx+5))
-        for idx in rand_idx[:2]:
+        for idx in rand_idx[2*mask_num:]:
             X_masked[i, idx+10] = np.nan
             mask_indices.append((i,idx+10))
     return X_masked, mask_indices
