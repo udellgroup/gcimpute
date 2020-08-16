@@ -5,6 +5,7 @@ from transforms.online_ordinal_marginal_estimator import OnlineOrdinalMarginalEs
 from statsmodels.distributions.empirical_distribution import ECDF
 import time
 from scipy.stats import random_correlation, norm, expon
+import pandas as pd
 
 
 def generate_sigma(seed):
@@ -21,14 +22,15 @@ def get_smae_types(X_imp, X, X_masked):
     smae_bin = get_smae(X_imp[:, 10:], X[:, 10:], X_masked[:, 10:])
     return (smae_cont, smae_ord, smae_bin)
 
-def mask_types(X, mask_num):
+def mask_types(X, mask_num, seed):
     """
     Masks mask_num entries of the continuous, ordinal, and binary columns of X
     """
     X_masked = np.copy(X)
     mask_indices = []
     for i in range(X_masked.shape[0]):
-        rand_idx = np.random.choice(5, mask_num*3)
+        np.random.seed(seed*X_masked.shape[0]-i) # uncertain if this is necessary
+        rand_idx = np.concatenate((np.random.choice(5, mask_num, False), np.random.choice(5, mask_num, False), np.random.choice(5, mask_num, False)))
         for idx in rand_idx[:mask_num]:
             X_masked[i, idx] = np.nan
             mask_indices.append((i,idx))
@@ -40,6 +42,13 @@ def mask_types(X, mask_num):
             mask_indices.append((i,idx+10))
     return X_masked, mask_indices
 
+def avg_trials(data):
+    num_trials = len(data)
+    avgd_data = np.zeros(len(data[0]))
+    for trial in data:
+        avgd_data += np.array(trial)
+    return avgd_data / num_trials
+
 if __name__ == "__main__":
     # scaled_errors = []
     smaes = []
@@ -48,6 +57,9 @@ if __name__ == "__main__":
     NUM_RUNS = 10
     NUM_SAMPLES = 2000
     BATCH_SIZE = 50
+    smae_conts = []
+    smae_ords = []
+    smae_bins = []
     for i in range(1, NUM_RUNS+1):
         print("starting epoch: ", i, "\n")
         # scaled_errors = []
@@ -76,7 +88,8 @@ if __name__ == "__main__":
 
         # X_masked = mask_one_per_row(X)
         MASK_NUM = 2
-        X_masked, mask_indices = mask_types(X, MASK_NUM)
+        X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
+        print(X_masked[0])
         cont_indices = np.array([True, True, True, True, True, False,
                                  False, False, False, False, False, False, False, False, False])
         ord_indices = np.array([False, False, False, False, False,
@@ -97,6 +110,10 @@ if __name__ == "__main__":
         smae = get_smae(X_imp, X, X_masked)
         # rmse = get_scaled_error(X_imp[:, :5], X[:, :5])
         smaes.append(smae)
+        smae_cont, smae_ord, smae_bin = get_smae_types(X_imp, X, X_masked)
+        smae_conts.append(smae_cont)
+        smae_ords.append(smae_ord)
+        smae_bins.append(smae_bin)
         # rmses.append(rmse)
     # mean_rmse = np.mean(rmses, axis=0)
     mean_smae = np.mean(smaes, axis=0)
@@ -105,6 +122,12 @@ if __name__ == "__main__":
     # print("std deviation of scaled errors is: ")
     # print(np.std(np.array(scaled_errors)))
     # print("\n")
+    smae_conts = avg_trials(smae_conts)
+    smae_ords = avg_trials(smae_ords)
+    smae_bins = avg_trials(smae_bins)
+    d = {'Continuous' : smae_conts, 'Ordinal' : smae_ords, 'Binary' : smae_bins}
+    df = pd.DataFrame(d)
+    df.to_csv('online_changing_dist_gen_complex_data.csv')
     mean_smaes = np.mean(np.array(smaes), axis=0)
     print("mean cont smaes are: ")
     print(np.mean(mean_smaes[:5]))
