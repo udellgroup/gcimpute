@@ -44,7 +44,7 @@ def mask_types(X, mask_num, seed):
 
 def avg_trials(data):
     num_trials = len(data)
-    avgd_data = np.zeros(len(data[0]))
+    avgd_data = np.zeros(np.array(data[0]).shape)
     for trial in data:
         avgd_data += np.array(trial)
     return avgd_data / num_trials
@@ -57,10 +57,13 @@ if __name__ == "__main__":
     NUM_RUNS = 10
     NUM_SAMPLES = 2000
     BATCH_SIZE = 50
-    smae_conts = []
-    smae_ords = []
-    smae_bins = []
+    smae_cont_trials = []
+    smae_ord_trials = []
+    smae_bin_trials = []
     for i in range(1, NUM_RUNS+1):
+        smae_conts = []
+        smae_ords = []
+        smae_bins = []
         print("starting epoch: ", i, "\n")
         # scaled_errors = []
         sigma1 = generate_sigma(3*i-2)
@@ -98,11 +101,17 @@ if __name__ == "__main__":
         X_imp = np.empty(X.shape)
         i = 0
         start_time = time.time()
+        print(X_masked.shape, X_imp.shape, X.shape)
         while i*BATCH_SIZE < X_masked.shape[0]:
             X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :], sigma_imp = oem.partial_fit_and_predict(
                 X_masked[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :])
-            # smae = get_smae(X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :], X[i*BATCH_SIZE:(
-            #     i+1)*BATCH_SIZE, :], X_masked[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :])
+            X_imp_batch = X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
+            X_batch = X[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
+            X_masked_batch = X_masked[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
+            smae_cont, smae_ord, smae_bin = get_smae_types(X_imp, X, X_masked)
+            smae_conts.append(smae_cont)
+            smae_ords.append(smae_ord)
+            smae_bins.append(smae_bin)
             i += 1
             # scaled_errors.append(get_scaled_error(sigma_imp, sigma))
         end_time = time.time()
@@ -110,10 +119,12 @@ if __name__ == "__main__":
         smae = get_smae(X_imp, X, X_masked)
         # rmse = get_scaled_error(X_imp[:, :5], X[:, :5])
         smaes.append(smae)
-        smae_cont, smae_ord, smae_bin = get_smae_types(X_imp, X, X_masked)
-        smae_conts.append(smae_cont)
-        smae_ords.append(smae_ord)
-        smae_bins.append(smae_bin)
+        # smae_cont, smae_ord, smae_bin = get_smae_types(X_imp, X, X_masked)
+        smae_cont_trials.append(smae_conts)
+        smae_ord_trials.append(smae_ords)
+        smae_bin_trials.append(smae_bins)
+        print(smae.shape)
+        print(np.array(smae_conts).shape)
         # rmses.append(rmse)
     # mean_rmse = np.mean(rmses, axis=0)
     mean_smae = np.mean(smaes, axis=0)
@@ -122,10 +133,14 @@ if __name__ == "__main__":
     # print("std deviation of scaled errors is: ")
     # print(np.std(np.array(scaled_errors)))
     # print("\n")
-    smae_conts = avg_trials(smae_conts)
-    smae_ords = avg_trials(smae_ords)
-    smae_bins = avg_trials(smae_bins)
-    d = {'Continuous' : smae_conts, 'Ordinal' : smae_ords, 'Binary' : smae_bins}
+    for i in range(NUM_RUNS):
+        d = {'Continuous': smae_cont_trials[i], 'Ordinal': smae_ord_trials[i], 'Binary': smae_bin_trials[i]}
+        df = pd.DataFrame(d)
+        df.to_csv('data_'+str(i)+'.csv')
+    smae_cont_trials = avg_trials(smae_cont_trials)
+    smae_ord_trials = avg_trials(smae_ord_trials)
+    smae_bin_trials = avg_trials(smae_bin_trials)
+    d = {'Continuous' : smae_cont_trials, 'Ordinal' : smae_ord_trials, 'Binary' : smae_bin_trials}
     df = pd.DataFrame(d)
     df.to_csv('online_changing_dist_gen_complex_data.csv')
     mean_smaes = np.mean(np.array(smaes), axis=0)
