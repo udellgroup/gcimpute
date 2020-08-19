@@ -137,12 +137,12 @@ if __name__ == "__main__":
         d = {'Continuous': smae_cont_trials[i], 'Ordinal': smae_ord_trials[i], 'Binary': smae_bin_trials[i]}
         df = pd.DataFrame(d)
         df.to_csv('data_'+str(i)+'.csv')
-    smae_cont_trials = avg_trials(smae_cont_trials)
-    smae_ord_trials = avg_trials(smae_ord_trials)
-    smae_bin_trials = avg_trials(smae_bin_trials)
-    d = {'Continuous' : smae_cont_trials, 'Ordinal' : smae_ord_trials, 'Binary' : smae_bin_trials}
-    df = pd.DataFrame(d)
-    df.to_csv('online_changing_dist_gen_complex_data.csv')
+    # smae_cont_trials = avg_trials(smae_cont_trials)
+    # smae_ord_trials = avg_trials(smae_ord_trials)
+    # smae_bin_trials = avg_trials(smae_bin_trials)
+    # d = {'Continuous' : smae_cont_trials, 'Ordinal' : smae_ord_trials, 'Binary' : smae_bin_trials}
+    # df = pd.DataFrame(d)
+    # df.to_csv('online_changing_dist_gen_complex_data.csv')
     mean_smaes = np.mean(np.array(smaes), axis=0)
     print("mean cont smaes are: ")
     print(np.mean(mean_smaes[:5]))
