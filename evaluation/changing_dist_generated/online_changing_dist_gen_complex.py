@@ -108,7 +108,7 @@ if __name__ == "__main__":
             X_imp_batch = X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
             X_batch = X[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
             X_masked_batch = X_masked[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
-            smae_cont, smae_ord, smae_bin = get_smae_types(X_imp, X, X_masked)
+            smae_cont, smae_ord, smae_bin = get_smae_types(X_imp_batch, X_batch, X_masked_batch)
             smae_conts.append(smae_cont)
             smae_ords.append(smae_ord)
             smae_bins.append(smae_bin)
