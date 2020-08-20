@@ -102,7 +102,19 @@ if __name__ == "__main__":
         X_imp, sigma_imp = em.impute_missing(X_masked, threshold=0.01)
         end_time = time.time()
         runtimes.append(end_time - start_time)
-        smae_conts, smae_ords, smae_bins = get_smae_types(X_imp, X, X_masked)
+
+        i = 0
+        while i*BATCH_SIZE < X_masked.shape[0]:
+            X_imp_batch = X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
+            X_batch = X[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
+            X_masked_batch = X_masked[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
+            smae_cont, smae_ord, smae_bin = get_smae_types(X_imp_batch, X_batch, X_masked_batch)
+            smae_conts.append(smae_cont)
+            smae_ords.append(smae_ord)
+            smae_bins.append(smae_bin)
+            i += 1
+
+        # smae_conts, smae_ords, smae_bins = get_smae_types(X_imp, X, X_masked)
         # smae_cont, smae_ord, smae_bin = get_smae_types(X_imp, X, X_masked)
         smae_cont_trials.append(smae_conts)
         smae_ord_trials.append(smae_ords)

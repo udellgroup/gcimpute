@@ -3,12 +3,18 @@ import numpy as np
 
 data = []
 
+type = 'online'
+if type == 'online':
+    vars = ['.csv', '_data.csv']
+else:
+    vars = ['_std.csv', '_stdata.csv']
+
 def parse_str(raw):
     return [float(n) for n in str.split(raw[1:-1])]
 
 batch_number = 120
 for i in range(10):
-    trial = pd.read_csv('data_'+str(i)+'.csv')
+    trial = pd.read_csv('data_'+str(i)+vars[0])
     for type in ['Continuous', 'Ordinal', 'Binary']:
         for batch in range(batch_number):
             trial[type][batch] = parse_str(trial[type][batch])
@@ -29,4 +35,4 @@ avg_vals['Ordinal'] /= 10
 avg_vals['Binary'] /= 10
 
 df = pd.DataFrame(avg_vals)
-df.to_csv('averaged_data.csv')
+df.to_csv('averaged'+vars[1])
