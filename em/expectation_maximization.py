@@ -30,7 +30,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord):
     Z_imp_row = np.copy(Z_row)
     p = Z_imp_row.shape[0]
     C = np.zeros((p,p))
-    obs_indices = np.where(~np.isnan(Z_row))[0]
+    obs_indices = np.where(~np.isnan(Z_row))[0] ## doing search twice for basically same thing?
     missing_indices = np.where(np.isnan(Z_row))[0]
     ord_in_obs = np.where(obs_indices < num_ord)[0]
     ord_obs_indices = obs_indices[ord_in_obs]
@@ -40,22 +40,30 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord):
     sigma_obs_missing = sigma[np.ix_(obs_indices, missing_indices)]
     sigma_missing_missing = sigma[np.ix_(missing_indices, missing_indices)]
     # precompute psuedo-inverse 
-    sigma_obs_obs_inv = np.linalg.pinv(sigma_obs_obs)
+    # sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs) ## edited --> solves a*x=i, finds a inv
     # precompute sigma_obs_obs_inv * simga_obs_missing
     if len(missing_indices) > 0:
-        J_obs_missing = np.matmul(sigma_obs_obs_inv, sigma_obs_missing)
+        # J_obs_missing = np.linalg.solve(sigma_obs_obs, sigma_obs_missing)
+        intermed_matrix = np.linalg.solve(sigma_obs_obs, np.concatenate((np.identity(len(sigma_obs_obs)), sigma_obs_missing)))
+        sigma_obs_obs_inv = intermed_matrix[:, :len(sigma_obs_obs)]
+        J_obs_missing = intermed_matrix[:, len(sigma_obs_obs):]
+    else:
+        sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs)
     # initialize vector of variances for observed ordinal dimensions
     var_ordinal = np.zeros(p)
 
     # OBSERVED ORDINAL ELEMENTS
     # when there is an observed ordinal to be imputed and another observed dimension, impute this ordinal
     if len(obs_indices) >= 2 and len(ord_obs_indices) >= 1:
-        for j in ord_obs_indices:
-            j_in_obs = np.where(obs_indices == j)[0]
-            not_j_in_obs = np.where(obs_indices != j)[0]
-            v = sigma_obs_obs_inv[:,j_in_obs]
-            new_var_ij = np.asscalar(1.0/v[j_in_obs])
-            new_mean_ij = np.asscalar(np.matmul(v[not_j_in_obs].T, Z_row[obs_indices[not_j_in_obs]])*(-new_var_ij))
+        ## for j in ord_obs_indices:
+        for ind in range(len(ord_obs_indices)):
+            j = obs_indices[ind]
+            ## j_in_obs = np.where(obs_indices == j)[0]
+            not_j_in_obs = np.where(obs_indices != j)[0] ## also related to this formula in 60
+            v = sigma_obs_obs_inv[:,ind] ## was j_in_obs
+            new_var_ij = np.asscalar(1.0/v[ind])
+            new_mean_ij = np.asscalar(np.matmul(v[not_j_in_obs].T, Z_row[obs_indices[not_j_in_obs]])*(-new_var_ij)) ## need document telling why we can use not_j_in_obs
+            ## above calculating conditional mean&variance of observed ordinals given all other observations, can look in paper to see actual formula & compare
             # the boundaries must be de-meaned and normalized
             mean, var = truncnorm.stats(
                 a=(r_lower_row[j] - new_mean_ij) / np.sqrt(new_var_ij),
@@ -66,7 +74,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord):
             )
             if np.isfinite(var):
                 var_ordinal[j] = var
-                C[j,j] = C[j,j] + var
+                C[j,j] = C[j,j] + var ## what is C? figure out!
             if np.isfinite(mean):
                 Z_row[j] = mean
     # MISSING ELEMENTS
@@ -74,11 +82,13 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord):
         Z_obs = Z_row[obs_indices]
         # mean expection and imputation
         Z_imp_row[obs_indices] = Z_obs
-        Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs)
+        Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs) ## imputing missing values using linear transformation of observed values from earlier
         # variance expectation and imputation
-        if len(ord_obs_indices) >= 1 and len(obs_indices) >= 2 and np.sum(var_ordinal) > 0:
-            diag_var_ord = np.diag(var_ordinal[ord_obs_indices])
-            cov_missing_obs_ord = np.matmul(J_obs_missing[ord_in_obs].T, diag_var_ord)
+        if len(ord_obs_indices) >= 1 and len(obs_indices) >= 2 and np.sum(var_ordinal) > 0: ## figure out why we need such a requirement! it's like 52, but one more requirement: why 52 is as such, and why here is as such?
+            ## diag_var_ord = np.diag(var_ordinal[ord_obs_indices]) ## indexing vector on obs indices, then turning into diagonal matrix
+            ## cov_missing_obs_ord = np.matmul(J_obs_missing[ord_in_obs].T, diag_var_ord) ## check function SVD in numpy to find out how to directly multiply D in UDV^T by a matrix without converting to diag matrix
+            cov_missing_obs_ord = J_obs_missing[ord_in_obs].T * var_ordinal[ord_obs_indices]
+            ## u @ np.diag(s) = (u * s) --> THIS SHOULD WORK, BUT CHECK IF IT WORKS!
             C[np.ix_(missing_indices, ord_obs_indices)] += cov_missing_obs_ord
             C[np.ix_(ord_obs_indices, missing_indices)] += cov_missing_obs_ord.T
             C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing) + np.matmul(cov_missing_obs_ord, J_obs_missing[ord_in_obs])
@@ -111,9 +121,9 @@ class ExpectationMaximization():
             # guess the indices from the data
             cont_indices = self.get_cont_indices(X, max_ord)
             ord_indices = ~cont_indices
-        self.transform_function = TransformFunction(X, cont_indices, ord_indices)
+        self.transform_function = TransformFunction(X, cont_indices, ord_indices) ## estimate transformation function
         sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers)
-        # rearrange sigma so it corresponds to the column ordering of X
+        # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
         sigma_rearranged = np.empty(sigma.shape)
         sigma_rearranged[np.ix_(ord_indices,ord_indices)] = sigma[:np.sum(ord_indices),:np.sum(ord_indices)]
         sigma_rearranged[np.ix_(cont_indices,cont_indices)] = sigma[np.sum(ord_indices):,np.sum(ord_indices):]
@@ -123,7 +133,7 @@ class ExpectationMaximization():
         Z_imp_rearranged = np.empty(X.shape)
         Z_imp_rearranged[:,ord_indices] = Z_imp[:,:np.sum(ord_indices)]
         Z_imp_rearranged[:,cont_indices] = Z_imp[:,np.sum(ord_indices):]
-        X_imp_cont = np.copy(X[:,cont_indices])
+        X_imp_cont = np.copy(X[:,cont_indices]) ## unnecessary extra storage: can just store from ln 122
         X_imp_ord = np.copy(X[:,ord_indices])
         # Impute continuous
         X_imp_cont[np.isnan(X_imp_cont)] = self.transform_function.impute_cont_observed(Z_imp_rearranged)[np.isnan(X_imp_cont)]
@@ -132,6 +142,8 @@ class ExpectationMaximization():
         X_imp = np.empty(X.shape)
         X_imp[:,cont_indices] = X_imp_cont
         X_imp[:,ord_indices] = X_imp_ord
+
+        ## X_imp[:,cont_indices][np.isnan()] want to not use extra storage, do imputation on cont and ord directly in X_imp
         return X_imp, sigma_rearranged
 
     def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers):
@@ -153,13 +165,9 @@ class ExpectationMaximization():
             Z_imp (matrix): estimates of latent values
         """
         assert cont_indices is not None or ord_indices is not None
-        Z_ord = None
-        if ord_indices is not None:
-           Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
-           Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
-        Z_cont = None
-        if cont_indices is not None:
-            Z_cont = self.transform_function.get_cont_latent()
+        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z_cont = self.transform_function.get_cont_latent()
 
         Z_imp = np.concatenate((Z_ord,Z_cont), axis=1)
         # mean impute the missing continuous values for the sake of covariance estimation
@@ -199,13 +207,11 @@ class ExpectationMaximization():
         """
         n = Z.shape[0]
         p = Z.shape[1]
-        if np.all(np.isnan(r_lower)):
-            num_ord = 0
-        else:
-            num_ord = r_lower.shape[1]
+        num_ord = r_lower.shape[1]
         res = []
-        args = [(np.copy(Z[i,:]), np.copy(r_lower[i,:]), np.copy(r_upper[i,:]), sigma, num_ord) for i in range(n)]
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        ## args = [(np.copy(Z[(n/cores)*i:(n/cores+1)*i,:]), ...) for i in range(cores)]
+        args = [(np.copy(Z[i,:]), np.copy(r_lower[i,:]), np.copy(r_upper[i,:]), sigma, num_ord) for i in range(n)] ## length of args is number of rows, change it to be number of cores available, determine indicies for every element of the args
+        with ProcessPoolExecutor(max_workers=max_workers) as pool: ## in the future, perhaps accelerate by changing args so we can do 4 cores at a time
             res = pool.map(_em_step_body_, args)
             Z_imp = np.empty((n,p))
             C = np.zeros((p,p))
@@ -213,7 +219,8 @@ class ExpectationMaximization():
                 C += C_row/n
                 Z_imp[i,:] = Z_imp_row
                 Z[i,:] = Z_row
-            sigma = np.cov(Z_imp, rowvar=False) + C
+            sigma = np.cov(Z_imp, rowvar=False) + C ## cov matrix computation has complexity O(n*p^2), can parallelize in terms of n
+            ## instead of line 212, have single covariance for every batch, and it'll be returned by func called in parallelization --> putting back together has np2 complexity?
             return sigma, Z_imp, Z
 
     def _project_to_correlation(self, covariance):
