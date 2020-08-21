@@ -16,6 +16,8 @@ def cont_to_ord(x, k):
     convert entries of x to an ordinal with k levels using evenenly space thresholds
     """
     # make the cutoffs based on the quantiles
+    if k == 2:
+        return cont_to_binary(x)
     std_dev = np.std(x)
     cuttoffs = np.linspace(np.min(x), np.max(x), k+1)[1:]
     ords = np.zeros(len(x))
@@ -61,13 +63,14 @@ def get_scaled_error(sigma_imp, sigma):
     """
     return np.linalg.norm(sigma - sigma_imp) / np.linalg.norm(sigma)
 
-def mask(X, mask_fraction):
+def mask(X, mask_fraction, seed=0):
     """
     Masks mask_fraction entries of X, raising a value error if an entire row is masked
     """
     X_masked = np.copy(X) 
     obs_indices = np.argwhere(~np.isnan(X))
     total_observed = len(obs_indices)
+    np.random.seed(seed)
     mask_indices = obs_indices[np.random.choice(len(obs_indices), size=int(mask_fraction*total_observed), replace=False)]
     for i,j in mask_indices:
         X_masked[i,j] = np.nan
@@ -77,13 +80,15 @@ def mask(X, mask_fraction):
             raise ValueError("Failure in Generation, row is entirely nan")
     return X_masked, mask_indices
 
-def mask_one_per_row(X):
+def mask_one_per_row(X, seed=0):
     """
     Maskes one element uniformly at random from each row of X
     """
     X_masked = np.copy(X)
-    for i in range(X_masked.shape[0]):
-        rand_idx = np.random.choice(X.shape[1])
+    n,p = X.shape
+    for i in range(n):
+        np.random.seed(seed*n+i)
+        rand_idx = np.random.choice(p)
         X_masked[i,rand_idx] = np.nan
     return X_masked
 
