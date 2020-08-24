@@ -70,9 +70,10 @@ def mask_types(X, mask_num, seed):
     """
     X_masked = np.copy(X)
     mask_indices = []
-    num_cols = X_masked.shape[0]
-    for i in range(X_masked.shape[0]):
-        np.random.seed(seed*num_cols-i) # uncertain if this is necessary
+    num_rows = X_masked.shape[0]
+    num_cols = X_masked.shape[1]
+    for i in range(num_rows):
+        np.random.seed(seed*num_rows-i) # uncertain if this is necessary
         rand_idx = np.concatenate((np.random.choice(num_cols // 3, mask_num, False), np.random.choice(num_cols // 3, mask_num, False), np.random.choice(num_cols // 3, mask_num, False)))
         for idx in rand_idx[:mask_num]:
             X_masked[i, idx] = np.nan
