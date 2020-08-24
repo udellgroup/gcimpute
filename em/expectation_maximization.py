@@ -31,7 +31,8 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord):
     p = Z_imp_row.shape[0]
     C = np.zeros((p,p))
     obs_indices = np.where(~np.isnan(Z_row))[0] ## doing search twice for basically same thing?
-    missing_indices = np.where(np.isnan(Z_row))[0]
+    #missing_indices = np.where(np.isnan(Z_row))[0]
+    missing_indices = np.setdiff1d(np.arange(p), obs_indices) ## Use set difference to avoid another searching
     ord_in_obs = np.where(obs_indices < num_ord)[0]
     ord_obs_indices = obs_indices[ord_in_obs]
     # obtain correlation sub-matrices
@@ -66,10 +67,12 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord):
         for ind in range(len(ord_obs_indices)):
             j = obs_indices[ind]
             ## j_in_obs = np.where(obs_indices == j)[0]
-            not_j_in_obs = np.where(obs_indices != j)[0] ## also related to this formula in 60
+            #not_j_in_obs = np.where(obs_indices != j)[0] ## also related to this formula in 60
+            not_j_in_obs = np.setdiff1d(np.arange(len(obs_indices)),ind)  # Use set difference
             v = sigma_obs_obs_inv[:,ind] ## was j_in_obs
             new_var_ij = np.asscalar(1.0/v[ind])
-            new_mean_ij = np.asscalar(np.matmul(v[not_j_in_obs].T, Z_row[obs_indices[not_j_in_obs]])*(-new_var_ij)) ## need document telling why we can use not_j_in_obs
+            #new_mean_ij = np.asscalar(np.matmul(v[not_j_in_obs].T, Z_row[obs_indices[not_j_in_obs]])*(-new_var_ij)) ## need document telling why we can use not_j_in_obs
+            new_mean_ij = np.dot(v[not_j_in_obs], Z_row[obs_indices[not_j_in_obs]]) * (-new_var_ij) # use np.dot for vector inner product
             ## above calculating conditional mean&variance of observed ordinals given all other observations, can look in paper to see actual formula & compare
             # the boundaries must be de-meaned and normalized
             mean, var = truncnorm.stats(
