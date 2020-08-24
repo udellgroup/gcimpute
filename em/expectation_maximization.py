@@ -39,16 +39,23 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord):
     sigma_obs_obs = sigma[np.ix_(obs_indices,obs_indices)]
     sigma_obs_missing = sigma[np.ix_(obs_indices, missing_indices)]
     sigma_missing_missing = sigma[np.ix_(missing_indices, missing_indices)]
+    # print('sigma_obs_obs', sigma_obs_obs)
+    # print('len', len(sigma_obs_obs))
+    # print('sigma_obs_missing', sigma_obs_missing)
     # precompute psuedo-inverse 
     # sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs) ## edited --> solves a*x=i, finds a inv
     # precompute sigma_obs_obs_inv * simga_obs_missing
     if len(missing_indices) > 0:
         # J_obs_missing = np.linalg.solve(sigma_obs_obs, sigma_obs_missing)
-        intermed_matrix = np.linalg.solve(sigma_obs_obs, np.concatenate((np.identity(len(sigma_obs_obs)), sigma_obs_missing)))
+        # print('Attempting concat')
+        # print('lengths', len(sigma_obs_obs), len(sigma_obs_missing), len(sigma_obs_missing[0]))
+        tot_matrix = np.concatenate((np.identity(len(sigma_obs_obs)), sigma_obs_missing), axis=1)
+        # print(' -- FINISHED CONCAT -- ')
+        intermed_matrix = np.linalg.solve(sigma_obs_obs, tot_matrix)
         sigma_obs_obs_inv = intermed_matrix[:, :len(sigma_obs_obs)]
         J_obs_missing = intermed_matrix[:, len(sigma_obs_obs):]
     else:
-        sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs)
+        sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs, np.identity(len(sigma_obs_obs)))
     # initialize vector of variances for observed ordinal dimensions
     var_ordinal = np.zeros(p)
 
@@ -215,6 +222,8 @@ class ExpectationMaximization():
             res = pool.map(_em_step_body_, args)
             Z_imp = np.empty((n,p))
             C = np.zeros((p,p))
+            # print('TEST -- TEST -- TEST -- TEST')
+            # print(enumerate(res))
             for i,(C_row, Z_imp_row, Z_row) in enumerate(res):
                 C += C_row/n
                 Z_imp[i,:] = Z_imp_row
