@@ -80,10 +80,10 @@ def mask_types(X, mask_num, seed):
             mask_indices.append((i,idx))
         for idx in rand_idx[mask_num:2*mask_num]:
             X_masked[i, idx+5] = np.nan
-            mask_indices.append((i,idx+5))
+            mask_indices.append((i,idx+num_cols // 3))
         for idx in rand_idx[2*mask_num:]:
             X_masked[i, idx+10] = np.nan
-            mask_indices.append((i,idx+10))
+            mask_indices.append((i,idx+num_cols // 3 * 2))
     return X_masked, mask_indices
 
 def mask(X, mask_fraction, seed=0):
