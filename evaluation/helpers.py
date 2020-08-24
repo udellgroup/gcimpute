@@ -63,6 +63,28 @@ def get_scaled_error(sigma_imp, sigma):
     """
     return np.linalg.norm(sigma - sigma_imp) / np.linalg.norm(sigma)
 
+
+def mask_types(X, mask_num, seed):
+    """
+    Masks mask_num entries of the continuous, ordinal, and binary columns of X
+    """
+    X_masked = np.copy(X)
+    mask_indices = []
+    num_cols = X_masked.shape[0]
+    for i in range(X_masked.shape[0]):
+        np.random.seed(seed*num_cols-i) # uncertain if this is necessary
+        rand_idx = np.concatenate((np.random.choice(num_cols // 3, mask_num, False), np.random.choice(num_cols // 3, mask_num, False), np.random.choice(num_cols // 3, mask_num, False)))
+        for idx in rand_idx[:mask_num]:
+            X_masked[i, idx] = np.nan
+            mask_indices.append((i,idx))
+        for idx in rand_idx[mask_num:2*mask_num]:
+            X_masked[i, idx+5] = np.nan
+            mask_indices.append((i,idx+5))
+        for idx in rand_idx[2*mask_num:]:
+            X_masked[i, idx+10] = np.nan
+            mask_indices.append((i,idx+10))
+    return X_masked, mask_indices
+
 def mask(X, mask_fraction, seed=0):
     """
     Masks mask_fraction entries of X, raising a value error if an entire row is masked

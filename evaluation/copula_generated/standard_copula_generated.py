@@ -17,7 +17,7 @@ if __name__ == "__main__":
     scaled_errors = []
     smaes = []
     rmses = []
-    NUM_STEPS = 3
+    NUM_STEPS = 10
     runtimes = []
     for i in range(1, NUM_STEPS + 1):
         print("starting epoch: " + str(i))
@@ -31,8 +31,8 @@ if __name__ == "__main__":
             # 6-10 columns are binary, 11-15 columns are ordinal with 5 levels
             X[:,j] = cont_to_ord(X[:,j], k=2*(j<10)+5*(j>=10))
         # mask a given % of entries
-        MASK_FRACTION = 0.3
-        X_masked, mask_indices = mask(X, MASK_FRACTION, seed=i)
+        MASK_NUM = 2
+        X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
         em = ExpectationMaximization()
         start_time = time.time()
         X_imp, sigma_imp = em.impute_missing(X_masked, threshold=0.01)
