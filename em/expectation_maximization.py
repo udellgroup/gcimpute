@@ -143,15 +143,9 @@ class ExpectationMaximization():
         Z_imp_rearranged = np.empty(X.shape)
         Z_imp_rearranged[:,ord_indices] = Z_imp[:,:np.sum(ord_indices)]
         Z_imp_rearranged[:,cont_indices] = Z_imp[:,np.sum(ord_indices):]
-        X_imp_cont = np.copy(X[:,cont_indices]) ## unnecessary extra storage: can just store from ln 122
-        X_imp_ord = np.copy(X[:,ord_indices])
-        # Impute continuous
-        X_imp_cont[np.isnan(X_imp_cont)] = self.transform_function.impute_cont_observed(Z_imp_rearranged)[np.isnan(X_imp_cont)]
-        # Impute ordinal
-        X_imp_ord[np.isnan(X_imp_ord)] = self.transform_function.impute_ord_observed(Z_imp_rearranged)[np.isnan(X_imp_ord)]
         X_imp = np.empty(X.shape)
-        X_imp[:,cont_indices] = X_imp_cont
-        X_imp[:,ord_indices] = X_imp_ord
+        X_imp[:,cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
+        X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
 
         ## X_imp[:,cont_indices][np.isnan()] want to not use extra storage, do imputation on cont and ord directly in X_imp
         return X_imp, sigma_rearranged
