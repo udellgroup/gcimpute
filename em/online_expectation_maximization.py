@@ -159,15 +159,9 @@ class OnlineExpectationMaximization():
         Z_imp_rearranged = np.empty(X_batch.shape)
         Z_imp_rearranged[:,self.ord_indices] = Z_batch_imp[:,:np.sum(self.ord_indices)]
         Z_imp_rearranged[:,self.cont_indices] = Z_batch_imp[:,np.sum(self.ord_indices):]
-        X_imp_cont = np.copy(X_batch[:,self.cont_indices])
-        X_imp_ord = np.copy(X_batch[:,self.ord_indices])
-        # Impute continuous
-        X_imp_cont[np.isnan(X_imp_cont)] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged)[np.isnan(X_imp_cont)]
-        # Impute ordinal
-        X_imp_ord[np.isnan(X_imp_ord)] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged)[np.isnan(X_imp_ord)]
         X_imp = np.empty(X_batch.shape)
-        X_imp[:,self.cont_indices] = X_imp_cont
-        X_imp[:,self.ord_indices] = X_imp_ord
+        X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged)
+        X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged)
         if not self.window_size == 0:
             if end_point < start_point:
                 X_imp = np.concatenate((X_imp[:end_point], X_imp[start_point:]))

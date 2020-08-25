@@ -34,7 +34,8 @@ class OnlineTransformFunction():
         Z_cont = np.empty(cont_batch.shape)
         Z_cont[:] = np.nan
         for i,(cont_entry, cont_online_marginal) in enumerate(zip(cont_batch.T, self.cont_online_marginals)):
-            Z_cont[~np.isnan(cont_entry),i] = cont_online_marginal.get_cdf(cont_entry[~np.isnan(cont_entry)])
+            missing = np.isnan(cont_entry)
+            Z_cont[~missing,i] = cont_online_marginal.get_cdf(cont_entry[~missing])
         return Z_cont
 
     def partial_evaluate_ord_latent(self, X_batch):
@@ -47,10 +48,11 @@ class OnlineTransformFunction():
         Z_ord_upper = np.empty(ord_batch.shape)
         Z_ord_upper[:] = np.nan
         for i,(ord_entry, ord_online_marginal) in enumerate(zip(ord_batch.T, self.ord_online_marginals)):
-            Z_ord_lower[~np.isnan(ord_entry),i], Z_ord_upper[~np.isnan(ord_entry),i] = ord_online_marginal.get_cdf(ord_entry[~np.isnan(ord_entry)])
+            missing = np.isnan(ord_entry)
+            Z_ord_lower[~missing,i], Z_ord_upper[~missing,i] = ord_online_marginal.get_cdf(ord_entry[~missing])
             # clip to prevent errors due to numerical imprecisions of floating poitns
-            Z_ord_lower[~np.isnan(ord_entry),i] = norm.ppf(np.clip(Z_ord_lower, a_min=0, a_max=1)[~np.isnan(ord_entry),i])
-            Z_ord_upper[~np.isnan(ord_entry),i] = norm.ppf(np.clip(Z_ord_upper, a_min=0, a_max=1)[~np.isnan(ord_entry),i])
+            Z_ord_lower[~missing,i] = norm.ppf(np.clip(Z_ord_lower, a_min=0, a_max=1)[~missing,i])
+            Z_ord_upper[~missing,i] = norm.ppf(np.clip(Z_ord_upper, a_min=0, a_max=1)[~missing,i])
         return Z_ord_lower, Z_ord_upper
 
     def partial_evaluate_cont_observed(self, Z_batch):
