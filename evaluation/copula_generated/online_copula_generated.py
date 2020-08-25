@@ -4,7 +4,8 @@ from scipy.stats import random_correlation, norm, expon
 from evaluation.helpers import *
 import time
 
-def generate_sigma():
+def generate_sigma(seed=0):
+    np.random.seed(seed)
     W = np.random.normal(size=(15,15))
     covariance = np.matmul(W,W.T)
     D = np.diagonal(covariance)
@@ -21,7 +22,7 @@ if __name__ == "__main__":
         np.random.seed(i)
         print("starting epoch: " + str(i))
         print("\n")
-        sigma = generate_sigma()
+        sigma = generate_sigma(seed=i)
         mean = np.zeros(sigma.shape[0])
         X = np.random.multivariate_normal(mean, sigma, size=2000)
         X[:,:5] = expon.ppf(norm.cdf(X[:,:5]), scale = 3)
@@ -36,11 +37,13 @@ if __name__ == "__main__":
         X[:,13] = cont_to_ord(X[:,13], k=5)
         X[:,14] = cont_to_ord(X[:,14], k=5)
         # mask a given % of entries
-        MASK_FRACTION = 0.3
-        X_masked, mask_indices = mask(X, MASK_FRACTION)
+        MASK_NUM = 2
+        BATCH_SIZE=20
+        WINDOW_SIZE=500
+        X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
         cont_indices = np.array([True, True, True, True, True, False, False, False, False, False, False, False, False, False, False])
         ord_indices = np.array([False, False, False, False, False, True, True, True, True, True, True, True, True, True, True])
-        oem = OnlineExpectationMaximization(cont_indices, ord_indices)
+        oem = OnlineExpectationMaximization(cont_indices, ord_indices, WINDOW_SIZE)
         start_time = time.time()
         i = 0
         X_imp = np.empty(X_masked.shape)
