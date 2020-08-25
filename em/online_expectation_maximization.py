@@ -32,7 +32,8 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
     Z_imp_row = np.copy(Z_row)
     C = np.zeros((p,p))
     obs_indices = np.where(~np.isnan(Z_row))[0]
-    missing_indices = np.where(np.isnan(Z_row))[0]
+    # missing_indices = np.where(np.isnan(Z_row))[0]
+    missing_indices = np.setdiff1d(np.arange(p), obs_indices)
     ord_in_obs = np.where(obs_indices < num_ord)[0]
     ord_obs_indices = obs_indices[ord_in_obs]
     # obtain correlation sub-matrices
@@ -41,21 +42,35 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
     sigma_obs_missing = sigma[np.ix_(obs_indices, missing_indices)]
     sigma_missing_missing = sigma[np.ix_(missing_indices, missing_indices)]
     # precompute psuedo-inverse 
-    sigma_obs_obs_inv = np.linalg.pinv(sigma_obs_obs)
+    ## sigma_obs_obs_inv = np.linalg.pinv(sigma_obs_obs)
     # precompute sigma_obs_obs_inv * simga_obs_missing
+    ## if len(missing_indices) > 0:
+    ##     J_obs_missing = np.matmul(sigma_obs_obs_inv, sigma_obs_missing)
     if len(missing_indices) > 0:
-        J_obs_missing = np.matmul(sigma_obs_obs_inv, sigma_obs_missing)
+        # J_obs_missing = np.linalg.solve(sigma_obs_obs, sigma_obs_missing)
+        # print('Attempting concat')
+        # print('lengths', len(sigma_obs_obs), len(sigma_obs_missing), len(sigma_obs_missing[0]))
+        tot_matrix = np.concatenate((np.identity(len(sigma_obs_obs)), sigma_obs_missing), axis=1)
+        # print(' -- FINISHED CONCAT -- ')
+        intermed_matrix = np.linalg.solve(sigma_obs_obs, tot_matrix)
+        sigma_obs_obs_inv = intermed_matrix[:, :len(sigma_obs_obs)]
+        J_obs_missing = intermed_matrix[:, len(sigma_obs_obs):]
+    else:
+        sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs, np.identity(len(sigma_obs_obs)))
     # initialize vector of variances for observed ordinal dimensions
     var_ordinal = np.zeros(p)
     # OBSERVED ORDINAL ELEMENTS
     # when there is an observed ordinal to be imputed and another observed dimension, impute this ordinal
     if len(obs_indices) >= 2 and len(ord_obs_indices) >= 1:
         for update_iter in range(num_ord_updates):
-            for j in ord_obs_indices:
-                j_in_obs = np.where(obs_indices == j)[0]
-                not_j_in_obs = np.where(obs_indices != j)[0]
-                v = sigma_obs_obs_inv[:,j_in_obs]
-                new_var_ij = np.asscalar(1.0/v[j_in_obs])
+            ## for j in ord_obs_indices:
+            for ind in range(len(ord_obs_indices)):
+                j = obs_indices[ind]
+                ## j_in_obs = np.where(obs_indices == j)[0]
+                ## not_j_in_obs = np.where(obs_indices != j)[0]
+                not_j_in_obs = np.setdiff1d(np.arange(len(obs_indices)), ind)
+                v = sigma_obs_obs_inv[:,ind]
+                new_var_ij = np.asscalar(1.0/v[ind])
                 new_mean_ij = np.asscalar(np.matmul(v[not_j_in_obs].T, Z_row[obs_indices[not_j_in_obs]])*(-new_var_ij))
                 mean, var = truncnorm.stats(
                     a=(r_lower_row[j] - new_mean_ij) / np.sqrt(new_var_ij),
@@ -66,21 +81,19 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
                 )
                 if np.isfinite(var):
                     var_ordinal[j] = var
-                    if update_iter == num_ord_updates - 1:
-                        # update the variance estimate
-                        C[j,j] = C[j,j] + var
+                    C[j,j] = C[j,j] + var
                 if np.isfinite(mean):
                     Z_row[j] = mean
-    Z_obs = Z_row[obs_indices]
-    # mean expection and imputation
-    Z_imp_row[obs_indices] = Z_obs
-    # MISSING ELEMENTS
     if len(missing_indices) > 0:
+        Z_obs = Z_row[obs_indices]
+        # mean expection and imputation
+        Z_imp_row[obs_indices] = Z_obs
         Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs)
         # variance expectation and imputation
         if len(ord_obs_indices) >= 1 and len(obs_indices) >= 2 and np.sum(var_ordinal) > 0:
-            diag_var_ord = np.diag(var_ordinal[ord_obs_indices])
-            cov_missing_obs_ord = np.matmul(J_obs_missing[ord_in_obs].T, diag_var_ord)
+            ## diag_var_ord = np.diag(var_ordinal[ord_obs_indices]) ## indexing vector on obs indices, then turning into diagonal matrix
+            ## cov_missing_obs_ord = np.matmul(J_obs_missing[ord_in_obs].T, diag_var_ord)
+            cov_missing_obs_ord = J_obs_missing[ord_in_obs].T * var_ordinal[ord_obs_indices]
             C[np.ix_(missing_indices, ord_obs_indices)] += cov_missing_obs_ord
             C[np.ix_(ord_obs_indices, missing_indices)] += cov_missing_obs_ord.T
             C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing) + np.matmul(cov_missing_obs_ord, J_obs_missing[ord_in_obs])
