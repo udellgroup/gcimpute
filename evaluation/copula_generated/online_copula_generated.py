@@ -4,7 +4,8 @@ from scipy.stats import random_correlation, norm, expon
 from evaluation.helpers import *
 import time
 
-def generate_sigma():
+def generate_sigma(seed=0):
+    np.random.seed(seed)
     W = np.random.normal(size=(15,15))
     covariance = np.matmul(W,W.T)
     D = np.diagonal(covariance)
@@ -21,7 +22,7 @@ if __name__ == "__main__":
         np.random.seed(i)
         print("starting epoch: " + str(i))
         print("\n")
-        sigma = generate_sigma()
+        sigma = generate_sigma(seed=i)
         mean = np.zeros(sigma.shape[0])
         X = np.random.multivariate_normal(mean, sigma, size=2000)
         X[:,:5] = expon.ppf(norm.cdf(X[:,:5]), scale = 3)
