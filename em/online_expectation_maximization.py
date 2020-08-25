@@ -90,7 +90,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
 
 
 class OnlineExpectationMaximization():
-    def __init__(self, cont_indices, ord_indices):
+    def __init__(self, cont_indices, ord_indices, window_size=0):
         self.transform_function = OnlineTransformFunction(cont_indices, ord_indices)
         self.cont_indices = cont_indices
         self.ord_indices = ord_indices
@@ -99,6 +99,10 @@ class OnlineExpectationMaximization():
         self.sigma = np.identity(p)
         # track what iteration the algorithm is on for use in weighting samples
         self.iteration = 1
+        self.window_size = window_size
+        self.window = np.array([None]*self.window_size)
+        self.update_pos = 0
+
 
     def partial_fit_and_predict(self, X_batch, max_workers=None, num_ord_updates=2, decay_coef=0.1):
         """
@@ -114,6 +118,17 @@ class OnlineExpectationMaximization():
             X_imp (matrix): X_batch with missing values imputed
             sigma_rearragned (matrix): an updated estimate of the covariance of the copula
         """
+        # update window with new batch, and give the rest of the window to the batch
+        for val in X_batch
+            self.window[self.update_pos] = val
+            self.update_pos += 1
+            if self.update_pos >= self.window_size:
+                self.update_pos = 0
+        if self.window[-1] == None:
+            end_of_data = np.where(self.window == None)[0]
+            X_batch = self.window[:end_of_data]
+        else:
+            X_batch = self.window
         # update marginals with the new batch
         self.transform_function.partial_fit(X_batch)
         sigma, Z_batch_imp = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef)
