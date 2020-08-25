@@ -71,7 +71,8 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
                 not_j_in_obs = np.setdiff1d(np.arange(len(obs_indices)), ind)
                 v = sigma_obs_obs_inv[:,ind]
                 new_var_ij = np.asscalar(1.0/v[ind])
-                new_mean_ij = np.asscalar(np.matmul(v[not_j_in_obs].T, Z_row[obs_indices[not_j_in_obs]])*(-new_var_ij))
+                ## new_mean_ij = np.asscalar(np.matmul(v[not_j_in_obs].T, Z_row[obs_indices[not_j_in_obs]])*(-new_var_ij))
+                new_mean_ij = np.dot(v[not_j_in_obs], Z_row[obs_indices[not_j_in_obs]]) * (-new_var_ij)
                 mean, var = truncnorm.stats(
                     a=(r_lower_row[j] - new_mean_ij) / np.sqrt(new_var_ij),
                     b=(r_upper_row[j] - new_mean_ij) / np.sqrt(new_var_ij),
