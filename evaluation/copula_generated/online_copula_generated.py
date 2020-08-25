@@ -37,10 +37,12 @@ if __name__ == "__main__":
         X[:,14] = cont_to_ord(X[:,14], k=5)
         # mask a given % of entries
         MASK_FRACTION = 0.3
+        BATCH_SIZE=20
+        WINDOW_SIZE=500
         X_masked, mask_indices = mask(X, MASK_FRACTION)
         cont_indices = np.array([True, True, True, True, True, False, False, False, False, False, False, False, False, False, False])
         ord_indices = np.array([False, False, False, False, False, True, True, True, True, True, True, True, True, True, True])
-        oem = OnlineExpectationMaximization(cont_indices, ord_indices)
+        oem = OnlineExpectationMaximization(cont_indices, ord_indices, WINDOW_SIZE)
         start_time = time.time()
         i = 0
         X_imp = np.empty(X_masked.shape)

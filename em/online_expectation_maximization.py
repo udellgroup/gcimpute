@@ -100,7 +100,7 @@ class OnlineExpectationMaximization():
         # track what iteration the algorithm is on for use in weighting samples
         self.iteration = 1
         self.window_size = window_size
-        self.window = np.array([None]*self.window_size)
+        self.window = np.array([[None for x in range(p)] for y in range(self.window_size)]).astype(np.float64)
         self.update_pos = 0
 
 
@@ -119,16 +119,19 @@ class OnlineExpectationMaximization():
             sigma_rearragned (matrix): an updated estimate of the covariance of the copula
         """
         # update window with new batch, and give the rest of the window to the batch
-        for val in X_batch
-            self.window[self.update_pos] = val
-            self.update_pos += 1
-            if self.update_pos >= self.window_size:
-                self.update_pos = 0
-        if self.window[-1] == None:
-            end_of_data = np.where(self.window == None)[0]
-            X_batch = self.window[:end_of_data]
-        else:
-            X_batch = self.window
+        if not self.window_size == 0:
+            start_point = self.update_pos
+            for data in X_batch:
+                self.window[self.update_pos] = data
+                self.update_pos += 1
+                if self.update_pos >= self.window_size:
+                    self.update_pos = 0
+            end_point = self.update_pos
+            if self.window[-1][0] is None:
+                end_of_data = [data[0] is None for data in self.window].index(True)
+                X_batch = self.window[:end_of_data]
+            else:
+                X_batch = self.window
         # update marginals with the new batch
         self.transform_function.partial_fit(X_batch)
         sigma, Z_batch_imp = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef)
@@ -151,6 +154,11 @@ class OnlineExpectationMaximization():
         X_imp = np.empty(X_batch.shape)
         X_imp[:,self.cont_indices] = X_imp_cont
         X_imp[:,self.ord_indices] = X_imp_ord
+        if not self.window_size == 0:
+            if end_point < start_point:
+                X_imp = np.concatenate((X_imp[:end_point], X_imp[start_point:]))
+            else:
+                X_imp = X_imp[start_point:end_point]
         return X_imp, sigma_rearranged
     def _fit_covariance(self, X_batch, max_workers, num_ord_updates, decay_coef):
         """

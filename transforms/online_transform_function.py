@@ -19,6 +19,11 @@ class OnlineTransformFunction():
         """
         cont_entries = X_batch[:, self.cont_indices]
         ord_entries = X_batch[:, self.ord_indices]
+        print(cont_entries)
+        print(cont_entries.dtype)
+        print(X_batch.dtype)
+        for i in range(len(cont_entries[0])):
+            print(type(cont_entries[0,i]))
         # update all the continuos marginal estimates
         for cont_entry, cont_online_marginal in zip(cont_entries.T, self.cont_online_marginals):
             cont_online_marginal.partial_fit(cont_entry[~np.isnan(cont_entry)])
