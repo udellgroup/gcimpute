@@ -40,7 +40,7 @@ if __name__ == "__main__":
         X[:,14] = cont_to_ord(X[:,14], k=5)
         # mask a given % of entries
         MASK_NUM = 2
-        X_masked, mask_indices = mask_types(X, MASK_FRACTION, seed=i)
+        X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
         bem = BatchExpectationMaximization()
         start_time = time.time()
         X_imp, sigma_imp = bem.impute_missing(X_masked, max_iter=MAX_ITER, batch_size=BATCH_SIZE, max_workers=None)

@@ -35,7 +35,7 @@ if __name__ == "__main__":
         X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
         em = ExpectationMaximization()
         start_time = time.time()
-        X_imp, sigma_imp = em.impute_missing(X_masked, threshold=0.01)
+        X_imp, sigma_imp = em.impute_missing(X_masked, threshold=0.01, max_workers=4)
         end_time = time.time()
         runtimes.append(end_time - start_time)
         rmse = get_scaled_error(X_imp[:,:5], X[:,:5])

@@ -1,5 +1,6 @@
 from transforms.transform_function import TransformFunction
 from scipy.stats import norm, truncnorm
+from em.expectation_maximization import ExpectationMaximization
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 
@@ -90,7 +91,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
             C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
     return C, Z_imp_row, Z_row
 
-class BatchExpectationMaximization():
+class BatchExpectationMaximization(ExpectationMaximization):
     def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=None, max_ord=100, batch_size=64, num_ord_updates=2):
         """
         Fits a Gaussian Copula and imputes missing values in X.
@@ -124,15 +125,9 @@ class BatchExpectationMaximization():
         Z_imp_rearranged = np.empty(X.shape)
         Z_imp_rearranged[:,ord_indices] = Z_imp[:,:np.sum(ord_indices)]
         Z_imp_rearranged[:,cont_indices] = Z_imp[:,np.sum(ord_indices):]
-        X_imp_cont = np.copy(X[:,cont_indices])
-        X_imp_ord = np.copy(X[:,ord_indices])
-        # Impute continuous
-        X_imp_cont[np.isnan(X_imp_cont)] = self.transform_function.impute_cont_observed(Z_imp_rearranged)[np.isnan(X_imp_cont)]
-        # Impute ordinal
-        X_imp_ord[np.isnan(X_imp_ord)] = self.transform_function.impute_ord_observed(Z_imp_rearranged)[np.isnan(X_imp_ord)]
         X_imp = np.empty(X.shape)
-        X_imp[:,cont_indices] = X_imp_cont
-        X_imp[:,ord_indices] = X_imp_ord
+        X_imp[:,cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
+        X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
         return X_imp, sigma_rearranged
 
     def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers, batch_size, num_ord_updates):
@@ -153,7 +148,6 @@ class BatchExpectationMaximization():
             sigma (matrix): an estimate of the covariance of the copula
             Z_imp (matrix): estimates of latent values
         """
-        assert cont_indices is not None or ord_indices is not None
         assert cont_indices is not None or ord_indices is not None
         Z_ord = None
         if ord_indices is not None:
@@ -189,7 +183,7 @@ class BatchExpectationMaximization():
             else:
                 indices = training_permutation[batch_lower:batch_upper]
             C_batch = np.zeros((p, p))
-            args = [(np.copy(Z[i,:]), np.copy(Z_ord_lower[i,:]), np.copy(Z_ord_upper[i,:]), sigma, num_ord, num_ord_updates) for i in indices]
+            args = [(np.copy(Z[i,:]), np.copy(Z_ord_lower[i,:]), np.copy(Z_ord_upper[i,:]), sigma, num_ord, num_ord_updates) for i in indices] # divide into max_workers parts
             with ProcessPoolExecutor(max_workers=max_workers) as pool:
                 res = pool.map(_em_step_body_, args)
                 for i,(C_row, Z_imp_row, Z_row) in enumerate(res):
@@ -205,64 +199,3 @@ class BatchExpectationMaximization():
             prev_sigma = sigma
         return sigma, Z_imp
 
-    def _project_to_correlation(self, covariance):
-        """
-        Projects a covariance to a correlation matrix, normalizing it's diagonal entries
-        Args:
-            covariance (matrix): a covariance matrix
-        Returns:
-            correlation (matrix): the covariance matrix projected to a correlation matrix
-        """
-        D = np.diagonal(covariance)
-        D_neg_half = np.diag(1.0/np.sqrt(D))
-        return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
-
-    def _init_Z_ord(self, Z_ord_lower, Z_ord_upper):
-        """
-        Initializes the observed latent ordinal values by sampling from a standard
-        Gaussian trucated to the inveral of Z_ord_lower, Z_ord_upper
-        Args:
-            Z_ord_lower (matrix): lower range for ordinals
-            Z_ord_upper (matrix): upper range for ordinals
-        Returns:
-            Z_ord (range): Samples drawn from gaussian truncated between Z_ord_lower and Z_ord_upper
-        """
-        Z_ord = np.empty(Z_ord_lower.shape)
-        Z_ord[:] = np.nan
-        u_lower = np.copy(Z_ord_lower)
-        u_lower[~np.isnan(Z_ord_lower)] = norm.cdf(Z_ord_lower[~np.isnan(Z_ord_lower)])
-        u_upper = np.copy(Z_ord_upper)
-        u_upper[~np.isnan(Z_ord_upper)] = norm.cdf(Z_ord_upper[~np.isnan(Z_ord_upper)])
-        u_samples = np.random.uniform(u_lower[~np.isnan(u_lower)],u_upper[~np.isnan(u_lower)])
-        # convert back from the uniform sample to the guassian sample in that interval
-        Z_ord[~np.isnan(u_lower)] = norm.ppf(u_samples)
-        return Z_ord
-
-    def _get_scaled_diff(self, prev_sigma, sigma):
-        """
-        Get's the scaled difference between two correlation matrices
-        Args:
-            prev_sigma (matrix): previous estimate of a matrix
-            sigma (matrix): current estimate of a matrix
-        Returns: 
-            diff (float): scaled distance between the inputs
-        """
-        return np.linalg.norm(sigma - prev_sigma) / np.linalg.norm(sigma)
-
-    def get_cont_indices(self, X, max_ord):
-        """
-        get's the indices of continuos columns by returning
-        those indicies which have at least max_ord distinct values
-        Args:
-            X (matrix): input matrix
-            max_ord (int): maximum number of distinct values an ordinal can take on in a column
-        Returns:
-            indices (array): indices of the columns which have at most max_ord distinct entries
-        """
-        indices = np.zeros(X.shape[1]).astype(bool)
-        for i, col in enumerate(X.T):
-            col_nonan = col[~np.isnan(col)]
-            col_unique = np.unique(col_nonan)
-            if len(col_unique) > max_ord:
-                indices[i] = True
-        return indices
