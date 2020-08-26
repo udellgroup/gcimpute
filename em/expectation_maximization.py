@@ -9,7 +9,23 @@ def _em_step_body_(args):
     """
     return _em_step_body(*args)
 
-def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord):
+def _em_step_body(Z, r_lower, r_upper, sigma):
+    """
+    Iterate the rows over provided matrix 
+
+    """
+    num, p = Z.shape
+    Z_imp = np.copy(Z)
+    C = np.zeros((p,p))
+    for i in range(num):
+        c, z_imp, z = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma)
+        Z_imp[i,:] = z_imp
+        Z[i,:] = z
+        C += c
+    return C, Z_imp, Z
+
+
+def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma):
     """
     The body of the em algorithm for each row
     Returns a new latent row, latent imputed row and C matrix, which, when added
@@ -29,6 +45,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord):
     """
     Z_imp_row = np.copy(Z_row)
     p = Z_imp_row.shape[0]
+    num_ord = r_upper_row.shape[0]
     C = np.zeros((p,p))
     obs_indices = np.where(~np.isnan(Z_row))[0] ## doing search twice for basically same thing?
     #missing_indices = np.where(np.isnan(Z_row))[0]
@@ -111,7 +128,7 @@ class ExpectationMaximization():
     def __init__(self):
         return
 
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=None, max_ord=100):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=1, max_ord=100):
         """
         Fits a Gaussian Copula and imputes missing values in X.
 
@@ -150,7 +167,7 @@ class ExpectationMaximization():
         ## X_imp[:,cont_indices][np.isnan()] want to not use extra storage, do imputation on cont and ord directly in X_imp
         return X_imp, sigma_rearranged
 
-    def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers):
+    def _fit_covariance(self, X, cont_indices, ord_indices, threshold=0.01, max_iter=100, max_workers=1):
         """
         Fits the covariance matrix of the gaussian copula using the data 
         in X and returns the imputed latent values corresponding to 
@@ -191,7 +208,7 @@ class ExpectationMaximization():
             prev_sigma = sigma
         return sigma, Z_imp
 
-    def _em_step(self, Z, r_lower, r_upper, sigma, max_workers):
+    def _em_step(self, Z, r_lower, r_upper, sigma, max_workers=1):
         """
         Executes one step of the EM algorithm to update the covariance 
         of the copula
@@ -211,22 +228,23 @@ class ExpectationMaximization():
         """
         n = Z.shape[0]
         p = Z.shape[1]
-        num_ord = r_lower.shape[1]
         res = []
         ## args = [(np.copy(Z[(n/cores)*i:(n/cores+1)*i,:]), ...) for i in range(cores)]
-        args = [(np.copy(Z[i,:]), np.copy(r_lower[i,:]), np.copy(r_upper[i,:]), sigma, num_ord) for i in range(n)] ## length of args is number of rows, change it to be number of cores available, determine indicies for every element of the args
+        #args = [(np.copy(Z[i,:]), np.copy(r_lower[i,:]), np.copy(r_upper[i,:]), sigma, num_ord) for i in range(n)] ## length of args is number of rows, change it to be number of cores available, determine indicies for every element of the args
+        divide = n/max_workers * np.arange(max_workers+1)
+        divide = divide.astype(int)
+        args = [(np.copy(Z[divide[i]:divide[i+1],:]), r_lower[divide[i]:divide[i+1],:], r_upper[divide[i]:divide[i+1],:], sigma) for i in range(max_workers)]
         with ProcessPoolExecutor(max_workers=max_workers) as pool: ## in the future, perhaps accelerate by changing args so we can do 4 cores at a time
             res = pool.map(_em_step_body_, args)
             Z_imp = np.empty((n,p))
             C = np.zeros((p,p))
             # print('TEST -- TEST -- TEST -- TEST')
             # print(enumerate(res))
-            for i,(C_row, Z_imp_row, Z_row) in enumerate(res):
-                C += C_row/n
-                Z_imp[i,:] = Z_imp_row
-                Z[i,:] = Z_row
-            sigma = np.cov(Z_imp, rowvar=False) + C ## cov matrix computation has complexity O(n*p^2), can parallelize in terms of n
-            ## instead of line 212, have single covariance for every batch, and it'll be returned by func called in parallelization --> putting back together has np2 complexity?
+            for i,(C_divide, Z_imp_divide, Z_divide) in enumerate(res):
+                C += C_divide/n
+                Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
+                Z[divide[i]:divide[i+1],:] = Z_divide
+            sigma = np.cov(Z_imp, rowvar=False) + C 
             return sigma, Z_imp, Z
 
     def _project_to_correlation(self, covariance):
@@ -240,8 +258,9 @@ class ExpectationMaximization():
             correlation (matrix): the covariance matrix projected to a correlation matrix
         """
         D = np.diagonal(covariance)
-        D_neg_half = np.diag(1.0/np.sqrt(D))
-        return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
+        D_neg_half = 1.0/np.sqrt(D)
+        covariance *= D_neg_half
+        return covariance.T * D_neg_half
 
     def _init_Z_ord(self, Z_ord_lower, Z_ord_upper):
         """
@@ -255,15 +274,19 @@ class ExpectationMaximization():
         Returns:
             Z_ord (range): Samples drawn from gaussian truncated between Z_ord_lower and Z_ord_upper
         """
-        Z_ord = np.empty(Z_ord_lower.shape)
-        Z_ord[:] = np.nan
+        Z_ord = np.copy(Z_ord_upper)
+        n, k = Z_ord.shape
+        obs_indices = ~np.isnan(Z_ord_lower)
+
         u_lower = np.copy(Z_ord_lower)
-        u_lower[~np.isnan(Z_ord_lower)] = norm.cdf(Z_ord_lower[~np.isnan(Z_ord_lower)])
+        u_lower[obs_indices] = norm.cdf(Z_ord_lower[obs_indices])
         u_upper = np.copy(Z_ord_upper)
-        u_upper[~np.isnan(Z_ord_upper)] = norm.cdf(Z_ord_upper[~np.isnan(Z_ord_upper)])
-        u_samples = np.random.uniform(u_lower[~np.isnan(u_lower)],u_upper[~np.isnan(u_lower)])
-        # convert back from the uniform sample to the guassian sample in that interval
-        Z_ord[~np.isnan(u_lower)] = norm.ppf(u_samples)
+        u_upper[obs_indices] = norm.cdf(Z_ord_upper[obs_indices])
+        for i in range(n):
+            for j in range(k):
+                if not np.isnan(Z_ord_upper[i,j]) and u_upper[i,j] > 0 and u_lower[i,j]<1:
+                    u_sample = np.random.uniform(u_lower[i,j],u_upper[i,j])
+                    Z_ord[i,j] = norm.ppf(u_sample)
         return Z_ord
 
     def _get_scaled_diff(self, prev_sigma, sigma):
