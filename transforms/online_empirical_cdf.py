@@ -13,6 +13,8 @@ class OnlineEmpiricalCDF():
             self.X = np.copy(X_batch)
         elif X_batch.shape[0] > 0:
             self.X = np.hstack((self.X, X_batch))
+        # the previous partial_fit will store all the data it has seen so far
+        # self.X = window_at_the_column
 
     def get_cdf(self, X_batch):
         """

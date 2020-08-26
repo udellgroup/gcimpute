@@ -115,7 +115,7 @@ class OnlineExpectationMaximization():
         self.iteration = 1
         self.window_size = window_size
         self.window = np.array([[None for x in range(p)] for y in range(self.window_size)]).astype(np.float64)
-        self.update_pos = 0
+        self.update_pos = 0 # vector of update_pos of length p
 
 
     def partial_fit_and_predict(self, X_batch, max_workers=None, num_ord_updates=2, decay_coef=0.1):
@@ -137,7 +137,17 @@ class OnlineExpectationMaximization():
             start_point = self.update_pos
             for data in X_batch:
                 self.window[self.update_pos] = data
-                self.update_pos += 1
+                
+                self.update_pos += 1 
+                # index = observed locations of data, subset of {1,..,p}
+                # index = ~np.isnan(data)
+                # for j in index: 
+                #self.window[self.update_pos[j], j] = data[j]
+                # for j in range(p)
+                # self.transform_function[j].partial_fit(data[~np.isnan(data)])
+                # make sure data is iterating over columns of X_batch
+                # self.update_pos[j] += 1 
+                # perhaps move this part to OnlineTransformFunction.partial_fit(X_batch)
                 if self.update_pos >= self.window_size:
                     self.update_pos = 0
             end_point = self.update_pos
@@ -168,6 +178,7 @@ class OnlineExpectationMaximization():
             else:
                 X_imp = X_imp[start_point:end_point]
         return X_imp, sigma_rearranged
+
     def _fit_covariance(self, X_batch, max_workers, num_ord_updates, decay_coef):
         """
         Updates the covariance matrix of the gaussian copula using the data 
@@ -197,15 +208,13 @@ class OnlineExpectationMaximization():
         Z = np.concatenate((Z_ord, Z_cont), axis=1)
         batch_size = Z.shape[0]
         p = Z.shape[1]
-        if np.all(np.isnan(Z_ord_lower)):
-            num_ord = 0
-        else:
-            num_ord = Z_ord_lower.shape[1]
+        num_ord = Z_ord_lower.shape[1]
         # track previous sigma for the purpose of early stopping
         prev_sigma = self._project_to_correlation(self.sigma)
         Z_imp = np.zeros((batch_size, p))
         C = np.zeros((p, p))
         args = [(np.copy(Z[i,:]), np.copy(Z_ord_lower[i,:]), np.copy(Z_ord_upper[i,:]), prev_sigma, num_ord, num_ord_updates) for i in range(batch_size)]
+        # divide each batch into max_workers parts instead of n parts
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
             res = pool.map(_em_step_body_, args)
             for i,(C_row, Z_imp_row, Z_row) in enumerate(res):
