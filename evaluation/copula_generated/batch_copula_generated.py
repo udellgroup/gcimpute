@@ -28,22 +28,15 @@ if __name__ == "__main__":
         mean = np.zeros(sigma.shape[0])
         X = np.random.multivariate_normal(mean, sigma, size=2000)
         X[:,:5] = expon.ppf(norm.cdf(X[:,:5]), scale = 3)
-        X[:,5] = cont_to_binary(X[:,5])
-        X[:,6] = cont_to_binary(X[:,6])
-        X[:,7] = cont_to_binary(X[:,7])
-        X[:,8] = cont_to_binary(X[:,8])
-        X[:,9] = cont_to_binary(X[:,9])
-        X[:,10] = cont_to_ord(X[:,10], k=5)
-        X[:,11] = cont_to_ord(X[:,11], k=5)
-        X[:,12] = cont_to_ord(X[:,12], k=5)
-        X[:,13] = cont_to_ord(X[:,13], k=5)
-        X[:,14] = cont_to_ord(X[:,14], k=5)
+        for j in range(5,15,1):
+            # 6-10 columns are binary, 11-15 columns are ordinal with 5 levels
+            X[:,j] = cont_to_ord(X[:,j], k=2*(j<10)+5*(j>=10))
         # mask a given % of entries
         MASK_NUM = 2
         X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
         bem = BatchExpectationMaximization()
         start_time = time.time()
-        X_imp, sigma_imp = bem.impute_missing(X_masked, max_iter=MAX_ITER, batch_size=BATCH_SIZE, max_workers=None)
+        X_imp, sigma_imp = bem.impute_missing(X_masked, max_iter=MAX_ITER, batch_size=BATCH_SIZE, threshold = 0.01, max_workers=4)
         end_time = time.time()
         runtimes.append(end_time - start_time)
         scaled_error = get_scaled_error(sigma_imp, sigma)
