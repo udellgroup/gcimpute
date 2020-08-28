@@ -128,7 +128,7 @@ class ExpectationMaximization():
     def __init__(self):
         return
 
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=1, max_ord=100):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=1, max_ord=100, verbose=False):
         """
         Fits a Gaussian Copula and imputes missing values in X.
 
@@ -149,7 +149,7 @@ class ExpectationMaximization():
             cont_indices = self.get_cont_indices(X, max_ord)
             ord_indices = ~cont_indices
         self.transform_function = TransformFunction(X, cont_indices, ord_indices) ## estimate transformation function
-        sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers)
+        sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers, verbose)
         # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
         sigma_rearranged = np.empty(sigma.shape)
         sigma_rearranged[np.ix_(ord_indices,ord_indices)] = sigma[:np.sum(ord_indices),:np.sum(ord_indices)]
@@ -167,7 +167,7 @@ class ExpectationMaximization():
         ## X_imp[:,cont_indices][np.isnan()] want to not use extra storage, do imputation on cont and ord directly in X_imp
         return X_imp, sigma_rearranged
 
-    def _fit_covariance(self, X, cont_indices, ord_indices, threshold=0.01, max_iter=100, max_workers=1):
+    def _fit_covariance(self, X, cont_indices, ord_indices, threshold=0.01, max_iter=100, max_workers=1, verbose=False):
         """
         Fits the covariance matrix of the gaussian copula using the data 
         in X and returns the imputed latent values corresponding to 
@@ -204,8 +204,11 @@ class ExpectationMaximization():
             sigma = self._project_to_correlation(sigma)
             # stop early if the change in the correlation estimation is below the threshold
             if self._get_scaled_diff(prev_sigma, sigma) < threshold:
+                if verbose: print('Convergence at iteration '+str(i+1))
                 break
             prev_sigma = sigma
+        if verbose and i == max_iter-1: 
+            print("Convergence not achieved at maximum iterations")
         return sigma, Z_imp
 
     def _em_step(self, Z, r_lower, r_upper, sigma, max_workers=1):

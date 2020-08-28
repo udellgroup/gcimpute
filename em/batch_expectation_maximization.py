@@ -111,7 +111,7 @@ def _batch_em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_upda
 
 
 class BatchExpectationMaximization(ExpectationMaximization):
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=1, max_ord=100, batch_size=64, num_ord_updates=2):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=1, max_ord=100, batch_size=64, num_ord_updates=2, verbose=False):
         """
         Fits a Gaussian Copula and imputes missing values in X.
         Args:
@@ -133,7 +133,7 @@ class BatchExpectationMaximization(ExpectationMaximization):
             cont_indices = self.get_cont_indices(X, max_ord=max_ord)
             ord_indices = ~cont_indices
         self.transform_function = TransformFunction(X, cont_indices, ord_indices)
-        sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers, batch_size, num_ord_updates)
+        sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers, batch_size, num_ord_updates, verbose)
         # rearrange sigma so it corresponds to the column ordering of X
         sigma_rearranged = np.empty(sigma.shape)
         sigma_rearranged[np.ix_(ord_indices,ord_indices)] = sigma[:np.sum(ord_indices),:np.sum(ord_indices)]
@@ -149,7 +149,7 @@ class BatchExpectationMaximization(ExpectationMaximization):
         X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
         return X_imp, sigma_rearranged
 
-    def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers, batch_size, num_ord_updates):
+    def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers=1, batch_size=64, num_ord_updates=2, verbose=False):
         """
         Fits the covariance matrix of the gaussian copula using the data 
         in X and returns the imputed latent values corresponding to 
@@ -205,10 +205,15 @@ class BatchExpectationMaximization(ExpectationMaximization):
                     C_batch += C_divide/batch_size
             sigma_batch = np.cov(Z_imp[indices,:], rowvar=False) + C_batch
             sigma_batch = self._project_to_correlation(sigma_batch)
-            decay_coef = 1/(np.sqrt(batch_iter + 1))
+            #decay_coef = 1/(np.sqrt(batch_iter + 1))
+            #decay_coef = 1/(batch_iter + 1)
+            decay_coef = 0.5
             sigma = sigma_batch*decay_coef + (1 - decay_coef)*prev_sigma
             if self._get_scaled_diff(prev_sigma, sigma) < threshold:
+                if verbose: print('Convergence at batch iteration '+str(batch_iter+1))
                 break
             prev_sigma = sigma
+        if verbose and batch_iter == max_iter-1: 
+            print("Convergence not achieved at maximum iterations")
         return sigma, Z_imp
 
