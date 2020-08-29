@@ -2,6 +2,7 @@ from transforms.online_transform_function import OnlineTransformFunction
 from scipy.stats import norm, truncnorm
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
+from em.expectation_maximization import ExpectationMaximization
 
 def _em_step_body_(args):
     """
@@ -103,7 +104,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
     return C, Z_imp_row, Z_row
 
 
-class OnlineExpectationMaximization():
+class OnlineExpectationMaximization(ExpectationMaximization):
     def __init__(self, cont_indices, ord_indices, window_size=0):
         self.transform_function = OnlineTransformFunction(cont_indices, ord_indices, window_size=window_size)
         self.cont_indices = cont_indices
@@ -196,54 +197,4 @@ class OnlineExpectationMaximization():
         self.iteration += 1
         return self.sigma, Z_imp
 
-    def _project_to_correlation(self, covariance):
-        """
-        Projects a covariance to a correlation matrix, normalizing it's diagonal entries
-
-        Args:
-            covariance (matrix): a covariance matrix
-
-        Returns:
-            correlation (matrix): the covariance matrix projected to a correlation matrix
-        """
-        D = np.diagonal(covariance)
-        D_neg_half = np.diag(1.0/np.sqrt(D))
-        return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
-
-    def _init_Z_ord(self, Z_ord_lower, Z_ord_upper):
-        """
-        Initializes the observed latent ordinal values by sampling from a standard
-        Gaussian trucated to the inveral of Z_ord_lower, Z_ord_upper
-
-        Args:
-            Z_ord_lower (matrix): lower range for ordinals
-            Z_ord_upper (matrix): upper range for ordinals
-
-        Returns:
-            Z_ord (range): Samples drawn from gaussian truncated between Z_ord_lower and Z_ord_upper
-        """
-        Z_ord = np.empty(Z_ord_lower.shape)
-        Z_ord[:] = np.nan
-        u_lower = np.copy(Z_ord_lower)
-        u_lower[~np.isnan(Z_ord_lower)] = norm.cdf(Z_ord_lower[~np.isnan(Z_ord_lower)])
-        u_upper = np.copy(Z_ord_upper)
-        u_upper[~np.isnan(Z_ord_upper)] = norm.cdf(Z_ord_upper[~np.isnan(Z_ord_upper)])
-        u_samples = np.random.uniform(u_lower[~np.isnan(u_lower)],u_upper[~np.isnan(u_lower)])
-        # convert back from the uniform sample to the guassian sample in that interval
-        Z_ord[~np.isnan(u_lower)] = norm.ppf(u_samples)
-        return Z_ord
-
-    def _get_scaled_diff(self, prev_sigma, sigma):
-        """
-        Get's the scaled difference between two correlation matrices
-
-        Args:
-            prev_sigma (matrix): previous estimate of a matrix
-            sigma (matrix): current estimate of a matrix
-
-        Returns: 
-            diff (float): scaled distance between the inputs
-        """
-        return np.linalg.norm(sigma - prev_sigma) / np.linalg.norm(sigma)
-
-
+    
