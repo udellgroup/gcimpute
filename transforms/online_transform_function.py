@@ -5,11 +5,15 @@ from .online_ordinal_marginal_estimator import OnlineOrdinalMarginalEstimator
 
 
 class OnlineTransformFunction():
-    def __init__(self, cont_indices, ord_indices, X=None):
+    def __init__(self, cont_indices, ord_indices, X=None, window_size=0):
         self.cont_online_marginals = [OnlineEmpiricalCDF() for _ in range(np.sum(cont_indices))]
         self.ord_online_marginals = [OnlineOrdinalMarginalEstimator() for _ in range(np.sum(ord_indices))]
         self.cont_indices = cont_indices
         self.ord_indices = ord_indices
+        p = len(cont_indices)
+        self.window_size = window_size
+        self.window = np.array([[None for x in range(p)] for y in range(self.window_size)]).astype(np.float64)
+        self.update_pos = np.zeros(p)
         if X is not None:
             self.partial_fit(X)
         
@@ -17,6 +21,19 @@ class OnlineTransformFunction():
         """
         Update the marginal estimate with the data in X
         """
+        if not self.window_size == 0:
+            if self.window[0, 0] is None:
+                self.window[:, self.cont_indices] = 0
+                self.window[:, self.ord_indices] = min(X_batch[:, self.ord_indices])
+            for row in X_batch:
+                for col_num in range(len(row)):
+                    data = row[col_num]
+                    if not np.isnan(data):
+                        self.window[self.update_pos[col_num], col_num] = data
+                        self.update_pos[col_num] += 1 
+                        if self.update_pos[col_num] >= self.window_size:
+                            self.update_pos[col_num] = 0
+            X_batch = self.window
         cont_entries = X_batch[:, self.cont_indices]
         ord_entries = X_batch[:, self.ord_indices]
         # update all the continuos marginal estimates

@@ -105,7 +105,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
 
 class OnlineExpectationMaximization():
     def __init__(self, cont_indices, ord_indices, window_size=0):
-        self.transform_function = OnlineTransformFunction(cont_indices, ord_indices)
+        self.transform_function = OnlineTransformFunction(cont_indices, ord_indices, window_size)
         self.cont_indices = cont_indices
         self.ord_indices = ord_indices
         # we assume boolean array of indices
@@ -113,9 +113,6 @@ class OnlineExpectationMaximization():
         self.sigma = np.identity(p)
         # track what iteration the algorithm is on for use in weighting samples
         self.iteration = 1
-        self.window_size = window_size
-        self.window = np.array([[None for x in range(p)] for y in range(self.window_size)]).astype(np.float64)
-        self.update_pos = 0 # vector of update_pos of length p
 
 
     def partial_fit_and_predict(self, X_batch, max_workers=None, num_ord_updates=2, decay_coef=0.1):
@@ -132,30 +129,6 @@ class OnlineExpectationMaximization():
             X_imp (matrix): X_batch with missing values imputed
             sigma_rearragned (matrix): an updated estimate of the covariance of the copula
         """
-        # update window with new batch, and give the rest of the window to the batch
-        if not self.window_size == 0:
-            start_point = self.update_pos
-            for data in X_batch:
-                self.window[self.update_pos] = data
-                
-                self.update_pos += 1 
-                # index = observed locations of data, subset of {1,..,p}
-                # index = ~np.isnan(data)
-                # for j in index: 
-                #self.window[self.update_pos[j], j] = data[j]
-                # for j in range(p)
-                # self.transform_function[j].partial_fit(data[~np.isnan(data)])
-                # make sure data is iterating over columns of X_batch
-                # self.update_pos[j] += 1 
-                # perhaps move this part to OnlineTransformFunction.partial_fit(X_batch)
-                if self.update_pos >= self.window_size:
-                    self.update_pos = 0
-            end_point = self.update_pos
-            if self.window[-1][0] is None:
-                end_of_data = [data[0] is None for data in self.window].index(True)
-                X_batch = self.window[:end_of_data]
-            else:
-                X_batch = self.window
         # update marginals with the new batch
         self.transform_function.partial_fit(X_batch)
         sigma, Z_batch_imp = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef)
