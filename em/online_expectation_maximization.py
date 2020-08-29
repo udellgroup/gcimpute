@@ -105,7 +105,7 @@ def _em_step_body(Z_row, r_lower_row, r_upper_row, sigma, num_ord, num_ord_updat
 
 class OnlineExpectationMaximization():
     def __init__(self, cont_indices, ord_indices, window_size=0):
-        self.transform_function = OnlineTransformFunction(cont_indices, ord_indices, window_size)
+        self.transform_function = OnlineTransformFunction(cont_indices, ord_indices, window_size=window_size)
         self.cont_indices = cont_indices
         self.ord_indices = ord_indices
         # we assume boolean array of indices
@@ -145,11 +145,6 @@ class OnlineExpectationMaximization():
         X_imp = np.empty(X_batch.shape)
         X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged)
         X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged)
-        if not self.window_size == 0:
-            if end_point < start_point:
-                X_imp = np.concatenate((X_imp[:end_point], X_imp[start_point:]))
-            else:
-                X_imp = X_imp[start_point:end_point]
         return X_imp, sigma_rearranged
 
     def _fit_covariance(self, X_batch, max_workers, num_ord_updates, decay_coef):

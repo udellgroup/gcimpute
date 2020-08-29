@@ -17,7 +17,7 @@ if __name__ == "__main__":
     smaes = []
     rmses = []
     runtimes = []
-    NUM_RUNS = 10
+    NUM_RUNS = 3
     for i in range(1,NUM_RUNS+1):
         np.random.seed(i)
         print("starting epoch: " + str(i))
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
         cont_indices = np.array([True, True, True, True, True, False, False, False, False, False, False, False, False, False, False])
         ord_indices = np.array([False, False, False, False, False, True, True, True, True, True, True, True, True, True, True])
-        oem = OnlineExpectationMaximization(cont_indices, ord_indices, WINDOW_SIZE)
+        oem = OnlineExpectationMaximization(cont_indices, ord_indices, window_size=WINDOW_SIZE)
         start_time = time.time()
         i = 0
         X_imp = np.empty(X_masked.shape)
