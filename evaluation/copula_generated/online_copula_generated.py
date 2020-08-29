@@ -26,17 +26,17 @@ if __name__ == "__main__":
         sigma = generate_sigma(seed=i)
         mean = np.zeros(sigma.shape[0])
         X = np.random.multivariate_normal(mean, sigma, size=n)
-        #X[:,:5] = expon.ppf(norm.cdf(X[:,:5]), scale = 3)
-        #for j in range(5,15,1):
+        X[:,:5] = expon.ppf(norm.cdf(X[:,:5]), scale = 3)
+        for j in range(5,15,1):
             # 6-10 columns are binary, 11-15 columns are ordinal with 5 levels
-         #   X[:,j] = cont_to_ord(X[:,j], k=2*(j<10)+5*(j>=10))
-        #cont_indices = np.array([True] * 5 + [False] * 10)
-        #ord_indices = np.array([False] * 5 + [True] * 10)
-        for j in range(10):
-            X[:,j] = cont_to_ord(X[:,j], k=2*(j<5)+5*(j>=5))
-        X[:,10:] = expon.ppf(norm.cdf(X[:,10:]), scale = 3)
-        cont_indices = np.array([False] * 10 + [True] * 5)
-        ord_indices =  np.array([True] * 10 + [False] * 5)
+            X[:,j] = cont_to_ord(X[:,j], k=2*(j<10)+5*(j>=10))
+        cont_indices = np.array([True] * 5 + [False] * 10)
+        ord_indices = np.array([False] * 5 + [True] * 10)
+        #X[:,10:] = expon.ppf(norm.cdf(X[:,10:]), scale = 3)
+        #for j in range(10):
+         #   X[:,j] = cont_to_ord(X[:,j], k=2*(j<5)+5*(j>=5))
+        #cont_indices = np.array([False] * 10 + [True] * 5)
+        #ord_indices =  np.array([True] * 10 + [False] * 5)
         # mask a given % of entries
         MASK_NUM = 2
         X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)

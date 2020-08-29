@@ -196,7 +196,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         sigma_rearranged[np.ix_(self.ord_indices,self.ord_indices)] = self.sigma[:np.sum(self.ord_indices),:np.sum(self.ord_indices)]
         sigma_rearranged[np.ix_(self.cont_indices,self.cont_indices)] = self.sigma[np.sum(self.ord_indices):,np.sum(self.ord_indices):]
         sigma_rearranged[np.ix_(self.cont_indices,self.ord_indices)] = self.sigma[np.sum(self.ord_indices):,:np.sum(self.ord_indices)]
-        sigma_rearranged[np.ix_(self.ord_indices,self.cont_indices)] =  self.sigma[np.ix_(self.cont_indices,self.ord_indices)].T
+        sigma_rearranged[np.ix_(self.ord_indices,self.cont_indices)] =  sigma_rearranged[np.ix_(self.cont_indices,self.ord_indices)].T
         return sigma_rearranged
 
     
