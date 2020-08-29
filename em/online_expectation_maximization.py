@@ -164,9 +164,9 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             sigma (matrix): an updated estimate of the covariance of the copula
             Z_imp (matrix): estimates of latent values in X_batch
         """
-        Z_ord_lower, Z_ord_upper = self.transform_function.partial_evaluate_ord_latent(X_batch) # Ideally, it should work without input X_batch
+        Z_ord_lower, Z_ord_upper = self.transform_function.partial_evaluate_ord_latent(X_batch) 
         Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
-        Z_cont = self.transform_function.partial_evaluate_cont_latent(X_batch) # Same as above
+        Z_cont = self.transform_function.partial_evaluate_cont_latent(X_batch) 
         # Latent variable matrix with columns sorted as ordinal, continuous
         Z = np.concatenate((Z_ord, Z_cont), axis=1)
         batch_size, p = Z.shape
