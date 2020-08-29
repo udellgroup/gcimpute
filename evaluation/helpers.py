@@ -90,18 +90,28 @@ def mask(X, mask_fraction, seed=0):
     """
     Masks mask_fraction entries of X, raising a value error if an entire row is masked
     """
+    complete = False
+    count = 0
     X_masked = np.copy(X) 
     obs_indices = np.argwhere(~np.isnan(X))
     total_observed = len(obs_indices)
-    np.random.seed(seed)
-    mask_indices = obs_indices[np.random.choice(len(obs_indices), size=int(mask_fraction*total_observed), replace=False)]
-    for i,j in mask_indices:
-        X_masked[i,j] = np.nan
-        row = X_masked[i,:]
-        if len(row[~np.isnan(row)]) == 0:
-            print(i)
-            raise ValueError("Failure in Generation, row is entirely nan")
-    return X_masked, mask_indices
+    while not complete:
+        np.random.seed(seed)
+        print(seed)
+        mask_indices = obs_indices[np.random.choice(len(obs_indices), size=int(mask_fraction*total_observed), replace=False)]
+        for i,j in mask_indices:
+            X_masked[i,j] = np.nan
+        complete = True
+        for row in X_masked:
+            if len(row[~np.isnan(row)]) == 0:
+                seed += 1
+                count += 1
+                complete = False
+                X_masked = np.copy(X)
+                break
+        if count == 50:
+            raise ValueError("Failure in Masking data without empty rows")
+    return X_masked, mask_indices, seed
 
 def mask_one_per_row(X, seed=0):
     """
