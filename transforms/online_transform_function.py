@@ -5,7 +5,15 @@ from .online_ordinal_marginal_estimator import OnlineOrdinalMarginalEstimator
 
 
 class OnlineTransformFunction():
-    def __init__(self, cont_indices, ord_indices, X=None, window_size=0):
+    def __init__(self, cont_indices, ord_indices, X=None, window_size=100):
+        """
+        Require window_size to be positive integers.
+
+        To initialize the window, 
+        for continuous columns, sample standatd normal with mean and variance determined by the first batch of observation;
+        for ordinal columns, sample uniformly with replacement among all integers between min and max seen from data.
+
+        """
         self.cont_online_marginals = [OnlineEmpiricalCDF() for _ in range(np.sum(cont_indices))]
         self.ord_online_marginals = [OnlineOrdinalMarginalEstimator() for _ in range(np.sum(ord_indices))]
         self.cont_indices = cont_indices
@@ -14,6 +22,7 @@ class OnlineTransformFunction():
         self.window_size = window_size
         self.window = np.array([[None for x in range(p)] for y in range(self.window_size)]).astype(np.float64)
         self.update_pos = np.zeros(p).astype(np.int)
+        self.batch_dim = None
         if X is not None:
             self.partial_fit(X)
         
@@ -21,28 +30,26 @@ class OnlineTransformFunction():
         """
         Update the marginal estimate with the data in X
         """
-        if not self.window_size == 0:
-            if self.window[0, 0] is None:
-                self.window[:, self.cont_indices] = 0
-                self.window[:, self.ord_indices] = min(X_batch[:, self.ord_indices])
-            for row in X_batch:
-                for col_num in range(len(row)):
-                    data = row[col_num]
-                    if not np.isnan(data):
-                        self.window[self.update_pos[col_num], col_num] = data
-                        self.update_pos[col_num] += 1 
-                        if self.update_pos[col_num] >= self.window_size:
-                            self.update_pos[col_num] = 0
-            X_batch = self.window
-        cont_entries = X_batch[:, self.cont_indices]
-        ord_entries = X_batch[:, self.ord_indices]
+        if self.window[0, 0] is None:
+            # YX comment: improve the initial sampling as described in lines 12-14
+            # the initial sampling should be done column-wisely
+            self.window[:, self.cont_indices] = 0
+            self.window[:, self.ord_indices] = min(X_batch[:, self.ord_indices])
+        for row in X_batch:
+            for col_num in range(len(row)):
+                data = row[col_num]
+                if not np.isnan(data):
+                    self.window[self.update_pos[col_num], col_num] = data
+                    self.update_pos[col_num] += 1 
+                    if self.update_pos[col_num] >= self.window_size:
+                        self.update_pos[col_num] = 0
+        cont_entries = self.window[:, self.cont_indices]
+        ord_entries = self.window[:, self.ord_indices]
+        self.batch_dim = X_batch.shape
+        # IT SUFFICES TO UPDATE THE WINDOW WHEN NEW DATA POINTS COME IN 
         # update all the continuos marginal estimates
-        for cont_entry, cont_online_marginal in zip(cont_entries.T, self.cont_online_marginals):
-            # update window here 
-            # data = X_batch[:,j]
-            # cont_online_marginal.partial_fit(data[~np.isnan(data)]) 
-            # inside the partial.fit, modify the self.X such that old values are removed and new values come in
-            cont_online_marginal.partial_fit(cont_entry[~np.isnan(cont_entry)]) 
+        #for cont_entry, cont_online_marginal in zip(cont_entries.T, self.cont_online_marginals):
+         #   cont_online_marginal.partial_fit(cont_entry[~np.isnan(cont_entry)]) 
 
         # update all the ordinal marginal estimates
         for ord_entry, ord_online_marginal in zip(ord_entries.T, self.ord_online_marginals):
@@ -52,12 +59,13 @@ class OnlineTransformFunction():
         """
         Obtain the latent continuous values corresponding to X_batch 
         """
-        cont_batch = X_batch[:,self.cont_indices]
-        Z_cont = np.empty(cont_batch.shape)
-        Z_cont[:] = np.nan
-        for i,(cont_entry, cont_online_marginal) in enumerate(zip(cont_batch.T, self.cont_online_marginals)):
-            missing = np.isnan(cont_entry)
-            Z_cont[~missing,i] = cont_online_marginal.get_cdf(cont_entry[~missing])
+        X_cont = X_batch[:,self.cont_indices]
+        window_cont = self.window[:,self.cont_indices]
+        Z_cont = np.copy(X_cont)
+        for i,cont_online_marginal in enumerate(self.cont_online_marginals):
+            # INPUT THE WINDOW FOR EVERY COLUMN
+            missing = np.isnan(X_cont[:,i])
+            Z_cont[~missing,i] = cont_online_marginal.get_cdf(X_cont[~missing,i], window_cont[:,i])
         return Z_cont
 
     def partial_evaluate_ord_latent(self, X_batch):
@@ -71,20 +79,23 @@ class OnlineTransformFunction():
         Z_ord_upper[:] = np.nan
         for i,(ord_entry, ord_online_marginal) in enumerate(zip(ord_batch.T, self.ord_online_marginals)):
             missing = np.isnan(ord_entry)
+            # INPUT THE WINDOW FOR EVERY COLUMN
             Z_ord_lower[~missing,i], Z_ord_upper[~missing,i] = ord_online_marginal.get_cdf(ord_entry[~missing])
             # clip to prevent errors due to numerical imprecisions of floating poitns
             Z_ord_lower[~missing,i] = norm.ppf(np.clip(Z_ord_lower, a_min=0, a_max=1)[~missing,i])
             Z_ord_upper[~missing,i] = norm.ppf(np.clip(Z_ord_upper, a_min=0, a_max=1)[~missing,i])
         return Z_ord_lower, Z_ord_upper
 
-    def partial_evaluate_cont_observed(self, Z_batch):
+    def partial_evaluate_cont_observed(self, Z_batch, X_batch):
         """
         Transform the latent continous variables in Z_batch into corresponding observations
         """
-        Z_batch_cont = Z_batch[:,self.cont_indices]
-        X_cont = np.empty(Z_batch_cont.shape)
-        for i,(cont_entry, cont_online_marginal) in enumerate(zip(Z_batch_cont.T, self.cont_online_marginals)):
-            X_cont[:,i] = cont_online_marginal.get_inverse_cdf(cont_entry)
+        Z_cont = Z_batch[:,self.cont_indices]
+        X_cont = X_batch[:,self.cont_indices]
+        window_cont = self.window[:,self.cont_indices]
+        for i,cont_online_marginal in enumerate(self.cont_online_marginals):
+            missing = np.isnan(X_cont[:,i])
+            X_cont[missing,i] = cont_online_marginal.get_inverse_cdf(Z_cont[missing,i], window_cont[:,i])
         return X_cont
 
     def partial_evaluate_ord_observed(self, Z_batch):

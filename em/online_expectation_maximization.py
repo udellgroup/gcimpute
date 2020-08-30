@@ -145,7 +145,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         Z_imp_rearranged[:,self.ord_indices] = Z_batch_imp[:,:np.sum(self.ord_indices)]
         Z_imp_rearranged[:,self.cont_indices] = Z_batch_imp[:,np.sum(self.ord_indices):]
         X_imp = np.empty(X_batch.shape)
-        X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged)
+        X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged, X_batch)
         X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged)
         return X_imp
 
@@ -165,6 +165,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             Z_imp (matrix): estimates of latent values in X_batch
         """
         Z_ord_lower, Z_ord_upper = self.transform_function.partial_evaluate_ord_latent(X_batch) 
+        # YX comments: modify partial_evaluate_ord_latent similar to partial_evaluate_cont_latent!!
         Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
         Z_cont = self.transform_function.partial_evaluate_cont_latent(X_batch) 
         # Latent variable matrix with columns sorted as ordinal, continuous
