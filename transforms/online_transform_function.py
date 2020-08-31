@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.stats import norm
-from .online_empirical_cdf import OnlineEmpiricalCDF
-from .online_ordinal_marginal_estimator import OnlineOrdinalMarginalEstimator
+from statsmodels.distributions.empirical_distribution import ECDF
 
 
 class OnlineTransformFunction():
@@ -14,8 +13,6 @@ class OnlineTransformFunction():
         for ordinal columns, sample uniformly with replacement among all integers between min and max seen from data.
 
         """
-        self.cont_online_marginals = [OnlineEmpiricalCDF() for _ in range(np.sum(cont_indices))]
-        self.ord_online_marginals = [OnlineOrdinalMarginalEstimator() for _ in range(np.sum(ord_indices))]
         self.cont_indices = cont_indices
         self.ord_indices = ord_indices
         p = len(cont_indices)
@@ -76,10 +73,10 @@ class OnlineTransformFunction():
         window_cont = self.window[:,self.cont_indices]
         Z_cont = np.empty(X_cont.shape)
         Z_cont[:] = np.nan
-        for i,cont_online_marginal in enumerate(self.cont_online_marginals):
+        for i in range(np.sum(self.cont_indices)):
             # INPUT THE WINDOW FOR EVERY COLUMN
             missing = np.isnan(X_cont[:,i])
-            Z_cont[~missing,i] = cont_online_marginal.get_cont_latent(X_cont[~missing,i], window_cont[:,i])
+            Z_cont[~missing,i] = self.get_cont_latent(X_cont[~missing,i], window_cont[:,i])
         return Z_cont
 
     def partial_evaluate_ord_latent(self, X_batch):
@@ -92,10 +89,10 @@ class OnlineTransformFunction():
         Z_ord_lower[:] = np.nan
         Z_ord_upper = np.empty(X_ord.shape)
         Z_ord_upper[:] = np.nan
-        for i, ord_online_marginal in enumerate(self.ord_online_marginals):
+        for i in range(np.sum(self.ord_indices)):
             missing = np.isnan(X_ord[:,i])
             # INPUT THE WINDOW FOR EVERY COLUMN
-            Z_ord_lower[~missing,i], Z_ord_upper[~missing,i] = ord_online_marginal.get_ord_latent(X_ord[~missing,i], window_ord[:,i])
+            Z_ord_lower[~missing,i], Z_ord_upper[~missing,i] = self.get_ord_latent(X_ord[~missing,i], window_ord[:,i])
         return Z_ord_lower, Z_ord_upper
 
     def partial_evaluate_cont_observed(self, Z_batch, X_batch):
@@ -106,10 +103,10 @@ class OnlineTransformFunction():
         X_cont = X_batch[:,self.cont_indices]
         X_cont_imp = np.copy(X_cont)
         window_cont = self.window[:,self.cont_indices]
-        for i,cont_online_marginal in enumerate(self.cont_online_marginals):
+        for i in range(np.sum(self.cont_indices)):
             missing = np.isnan(X_cont[:,i])
             ##print("length of missing : " +str(sum(missing)) + " at cont col "+str(i))
-            X_cont_imp[missing,i] = cont_online_marginal.get_cont_observed(Z_cont[missing,i], window_cont[:,i])
+            X_cont_imp[missing,i] = self.get_cont_observed(Z_cont[missing,i], window_cont[:,i])
         return X_cont_imp
 
     def partial_evaluate_ord_observed(self, Z_batch, X_batch):
@@ -120,11 +117,52 @@ class OnlineTransformFunction():
         X_ord = X_batch[:, self.ord_indices]
         X_ord_imp = np.copy(X_ord)
         window_ord = self.window[:,self.ord_indices]
-        for i, ord_online_marginal in enumerate(self.ord_online_marginals):
+        for i in range(np.sum(self.ord_indices)):
             missing = np.isnan(X_ord[:,i])
-            X_ord_imp[missing,i] = ord_online_marginal.get_ord_observed(Z_ord[missing,i], window_ord[:,i])
+            X_ord_imp[missing,i] = self.get_ord_observed(Z_ord[missing,i], window_ord[:,i])
         return X_ord_imp
 
+    def get_cont_latent(self, x_batch_obs, window):
+        """
+        Return the latent variables corresponding to the continuous entries of 
+        self.X. Estimates the CDF columnwise with the empyrical CDF
+        """
+        ecdf = ECDF(window)
+        l = len(window)
+        return norm.ppf((l / (l + 1.0)) * ecdf(x_batch_obs))
+
+    def get_cont_observed(self, z_batch_missing, window):
+        """
+        Applies marginal scaling to convert the latent entries in Z corresponding
+        to continuous entries to the corresponding imputed oberserved value
+        """
+        #print(len(z_batch_missing))
+        quantiles = norm.cdf(z_batch_missing)
+        #print("max quantiles:" +str(max(quantiles)) + "min quantiles:" +str(min(quantiles)))
+        return np.quantile(window, quantiles)
+
+    def get_ord_latent(self, x_batch_obs, window):
+        """
+        get the cdf at each point in X_batch
+        """
+        # the lower endpoint of the interval for the cdf
+        ecdf = ECDF(window)
+        unique = np.unique(window)
+        threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
+        z_lower_obs = norm.ppf(ecdf(x_batch_obs - threshold))
+        z_upper_obs = norm.ppf(ecdf(x_batch_obs + threshold))
+        return z_lower_obs, z_upper_obs
 
 
-        
+    def get_ord_observed(self, z_batch_missing, window, DECIMAL_PRECISION = 3):
+        """
+        Gets the inverse CDF of Q_batch
+        returns: the Q_batch quantiles of the ordinals seen thus far
+        """
+        n = len(window)
+        x = norm.cdf(z_batch_missing)
+        # round to avoid numerical errors in ceiling function
+        quantile_indices = np.ceil(np.round_((n + 1) * x - 1, DECIMAL_PRECISION))
+        quantile_indices = np.clip(quantile_indices, a_min=0,a_max=n-1).astype(int)
+        sort = np.sort(window)
+        return sort[quantile_indices]        
