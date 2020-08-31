@@ -1,7 +1,6 @@
 import numpy as np
 from statsmodels.distributions.empirical_distribution import ECDF
 from scipy.stats import norm
-DECIMAL_PRECISION = 3
 class TransformFunction():
     def __init__(self, X, cont_indices, ord_indices):
         self.X = X
@@ -75,7 +74,7 @@ class TransformFunction():
             X_imp[missing,i] = self.inverse_ecdf(x_col[~missing], norm.cdf(Z_ord[missing,i]))
         return X_imp
 
-    def inverse_ecdf(self, data, x):
+    def inverse_ecdf(self, data, x, DECIMAL_PRECISION = 3):
         """
         computes the inverse ecdf (quantile) for x with ecdf given by data
         """
