@@ -33,8 +33,13 @@ class OnlineTransformFunction():
         if self.window[0, 0] is None:
             # YX comment: improve the initial sampling as described in lines 12-14
             # the initial sampling should be done column-wisely
-            self.window[:, self.cont_indices] = 0
-            self.window[:, self.ord_indices] = min(X_batch[:, self.ord_indices])
+            mean_ord = np.mean(self.window[:, self.cont_indices])
+            std_ord = np.std(self.window[:, self.cont_indices])
+            self.window[:, self.cont_indices] = np.random.normal(mean_ord, std_ord, size=self.window[:, self.cont_indices].shape)
+            # ord_values = np.unique(X_batch[:, self.ord_indices]) # np.fromfunction(lambda i,j: np.random.choice(ord_values), size=self.window[:, self.ord_indices].shape)
+            min_ord = min(X_batch[:, self.ord_indices])
+            max_ord = max(X_batch[:, self.ord_indices])
+            self.window[:, self.ord_indices] = np.random.randint(min_ord, max_ord, size=self.window[:, self.ord_indices].shape)
         for row in X_batch:
             for col_num in range(len(row)):
                 data = row[col_num]
