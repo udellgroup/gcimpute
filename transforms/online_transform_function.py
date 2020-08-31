@@ -30,6 +30,7 @@ class OnlineTransformFunction():
         """
         Update the marginal estimate with the data in X
         """
+        self.batch_dim = X_batch.shape
         if self.window[0, 0] is None:
             # YX comment: improve the initial sampling as described in lines 12-14
             # the initial sampling should be done column-wisely
@@ -37,9 +38,14 @@ class OnlineTransformFunction():
             std_ord = np.std(self.window[:, self.cont_indices])
             self.window[:, self.cont_indices] = np.random.normal(mean_ord, std_ord, size=self.window[:, self.cont_indices].shape)
             # ord_values = np.unique(X_batch[:, self.ord_indices]) # np.fromfunction(lambda i,j: np.random.choice(ord_values), size=self.window[:, self.ord_indices].shape)
-            min_ord = min(X_batch[:, self.ord_indices])
-            max_ord = max(X_batch[:, self.ord_indices])
-            self.window[:, self.ord_indices] = np.random.randint(min_ord, max_ord, size=self.window[:, self.ord_indices].shape)
+            #min_ord = min(X_batch[:, self.ord_indices])
+            #max_ord = max(X_batch[:, self.ord_indices]) + 1
+            #self.window[:, self.ord_indices] = np.random.randint(min_ord, max_ord, size=self.window[:, self.ord_indices].shape)
+            for j,loc in enumerate(self.ord_indices):
+                if loc:
+                    min_ord = min(X_batch[:, j])
+                    max_ord = max(X_batch[:,j]) + 1
+                    self.window[:, j] = np.random.randint(min_ord, max_ord, size=self.window_size)
         for row in X_batch:
             for col_num in range(len(row)):
                 data = row[col_num]
@@ -48,14 +54,13 @@ class OnlineTransformFunction():
                     self.update_pos[col_num] += 1 
                     if self.update_pos[col_num] >= self.window_size:
                         self.update_pos[col_num] = 0
-        cont_entries = self.window[:, self.cont_indices]
-        ord_entries = self.window[:, self.ord_indices]
-        self.batch_dim = X_batch.shape
         # IT SUFFICES TO UPDATE THE WINDOW WHEN NEW DATA POINTS COME IN 
+        #cont_entries = self.window[:, self.cont_indices]
         # update all the continuos marginal estimates
         #for cont_entry, cont_online_marginal in zip(cont_entries.T, self.cont_online_marginals):
          #   cont_online_marginal.partial_fit(cont_entry[~np.isnan(cont_entry)]) 
 
+        ord_entries = self.window[:, self.ord_indices]
         # update all the ordinal marginal estimates
         for ord_entry, ord_online_marginal in zip(ord_entries.T, self.ord_online_marginals):
             ord_online_marginal.partial_fit(ord_entry[~np.isnan(ord_entry)])
