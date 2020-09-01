@@ -3,7 +3,7 @@ import numpy as np
 
 data = []
 
-type = 'online'
+type = 'offline'
 if type == 'online':
     vars = ['.csv', '_data.csv']
 else:
@@ -15,6 +15,7 @@ def parse_str(raw):
 batch_number = 120
 for i in range(10):
     trial = pd.read_csv('data_'+str(i)+vars[0])
+    batch_number = len(trial['Continuous'])
     for type in ['Continuous', 'Ordinal', 'Binary']:
         for batch in range(batch_number):
             trial[type][batch] = parse_str(trial[type][batch])

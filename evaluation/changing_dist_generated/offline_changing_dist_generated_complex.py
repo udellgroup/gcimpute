@@ -1,6 +1,6 @@
 from em.expectation_maximization import ExpectationMaximization
 import numpy as np
-from evaluation.helpers import cont_to_binary, cont_to_ord, get_smae, get_rmse, get_scaled_error, mask, mask_one_per_row
+from evaluation.helpers import cont_to_binary, cont_to_ord, get_smae, get_rmse, get_scaled_error, mask, mask_one_per_row, mask_types
 from transforms.online_ordinal_marginal_estimator import OnlineOrdinalMarginalEstimator
 from statsmodels.distributions.empirical_distribution import ECDF
 import time
@@ -22,26 +22,6 @@ def get_smae_types(X_imp, X, X_masked):
     smae_bin = get_smae(X_imp[:, 10:], X[:, 10:], X_masked[:, 10:])
     return (smae_cont, smae_ord, smae_bin)
 
-def mask_types(X, mask_num, seed):
-    """
-    Masks mask_num entries of the continuous, ordinal, and binary columns of X
-    """
-    X_masked = np.copy(X)
-    mask_indices = []
-    for i in range(X_masked.shape[0]):
-        np.random.seed(seed*X_masked.shape[0]-i) # uncertain if this is necessary
-        rand_idx = np.concatenate((np.random.choice(5, mask_num, False), np.random.choice(5, mask_num, False), np.random.choice(5, mask_num, False)))
-        for idx in rand_idx[:mask_num]:
-            X_masked[i, idx] = np.nan
-            mask_indices.append((i,idx))
-        for idx in rand_idx[mask_num:2*mask_num]:
-            X_masked[i, idx+5] = np.nan
-            mask_indices.append((i,idx+5))
-        for idx in rand_idx[2*mask_num:]:
-            X_masked[i, idx+10] = np.nan
-            mask_indices.append((i,idx+10))
-    return X_masked, mask_indices
-
 def avg_trials(data):
     num_trials = len(data)
     avgd_data = np.zeros(np.array(data[0]).shape)
@@ -55,7 +35,7 @@ if __name__ == "__main__":
     # rmses = []
     runtimes = []
     NUM_RUNS = 10
-    NUM_SAMPLES = 2000
+    NUM_SAMPLES = 10000
     BATCH_SIZE = 50
     smae_cont_trials = []
     smae_ord_trials = []
@@ -99,10 +79,10 @@ if __name__ == "__main__":
                                 True, True, True, True, True, True, True, True, True, True])
         em = ExpectationMaximization()
         start_time = time.time()
-        X_imp, sigma_imp = em.impute_missing(X_masked, threshold=0.01)
+        X_imp, sigma_imp = em.impute_missing(X_masked, threshold=0.01, max_workers=4)
         end_time = time.time()
         runtimes.append(end_time - start_time)
-
+        print("Getting errors")
         i = 0
         while i*BATCH_SIZE < X_masked.shape[0]:
             X_imp_batch = X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]

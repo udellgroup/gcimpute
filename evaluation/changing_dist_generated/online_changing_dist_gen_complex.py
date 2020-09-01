@@ -35,8 +35,9 @@ if __name__ == "__main__":
     # rmses = []
     runtimes = []
     NUM_RUNS = 10
-    NUM_SAMPLES = 2000
+    NUM_SAMPLES = 10000
     BATCH_SIZE = 50
+    WINDOW_SIZE = 500
     smae_cont_trials = []
     smae_ord_trials = []
     smae_bin_trials = []
@@ -72,22 +73,22 @@ if __name__ == "__main__":
         # X_masked = mask_one_per_row(X)
         MASK_NUM = 2
         X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
-        print(X_masked[0])
+        # print(X_masked[0])
         cont_indices = np.array([True, True, True, True, True, False,
                                  False, False, False, False, False, False, False, False, False])
         ord_indices = np.array([False, False, False, False, False,
                                 True, True, True, True, True, True, True, True, True, True])
-        oem = OnlineExpectationMaximization(cont_indices, ord_indices)
+        oem = OnlineExpectationMaximization(cont_indices, ord_indices, window_size=WINDOW_SIZE)
         X_imp = np.empty(X.shape)
         i = 0
         start_time = time.time()
         print(X_masked.shape, X_imp.shape, X.shape)
         while i*BATCH_SIZE < X_masked.shape[0]:
-            X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :], sigma_imp = oem.partial_fit_and_predict(
-                X_masked[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :])
-            X_imp_batch = X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
             X_batch = X[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
             X_masked_batch = X_masked[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
+            X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :] = oem.partial_fit_and_predict(
+                X_masked_batch, max_workers = 4, decay_coef=0.5)
+            X_imp_batch = X_imp[i*BATCH_SIZE:(i+1)*BATCH_SIZE, :]
             smae_cont, smae_ord, smae_bin = get_smae_types(X_imp_batch, X_batch, X_masked_batch)
             smae_conts.append(smae_cont)
             smae_ords.append(smae_ord)
