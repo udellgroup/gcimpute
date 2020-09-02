@@ -53,6 +53,7 @@ def main(START=1, NUM_RUNS=10):
         start_time = time.time()
         X_imp_online = np.zeros(X_masked.shape)
         #print(X_masked.shape, X_imp.shape, X.shape)
+        Med = np.nanmedian(X_masked,0)
         while j<NUM_BATCH:
             start = j*BATCH_SIZE
             end = (j+1)*BATCH_SIZE
@@ -62,8 +63,10 @@ def main(START=1, NUM_RUNS=10):
                                                              decay_coef=0.5, 
                                                              num_ord_updates=NUM_ORD_UPDATES)
             # imputation error at each batch
-            smae_online_trials[i-1,j,:] = get_smae_per_type(X_imp_online[start:end,:], X[start:end,:], X_masked[start:end,:])
-            smae_offline_trials[i-1,j,:] = get_smae_per_type(X_imp_offline[start:end,:], X[start:end,:], X_masked[start:end,:])
+            #smae_online_trials[i-1,j,:] = get_smae_per_type(X_imp_online[start:end,:], X[start:end,:], X_masked[start:end,:])
+            #smae_offline_trials[i-1,j,:] = get_smae_per_type(X_imp_offline[start:end,:], X[start:end,:], X_masked[start:end,:])
+            smae_online_trials[i-1,j,:] = get_smae(X_imp_online[start:end,:], X[start:end,:], X_masked[start:end,:], Med, True)
+            smae_offline_trials[i-1,j,:] = get_smae(X_imp_offline[start:end,:], X[start:end,:], X_masked[start:end,:], Med, True)
             j += 1
         end_time = time.time()
         print("online time: "+str(end_time-start_time))

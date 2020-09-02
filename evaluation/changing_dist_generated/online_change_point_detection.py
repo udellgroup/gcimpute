@@ -14,11 +14,15 @@ def main(START=1, NUM_RUNS=10):
     WINDOW_SIZE = 200
     NUM_ORD_UPDATES = 2
     NUM_BATCH = int(NUM_SAMPLES*3/BATCH_SIZE)
+    
+    res_change_statistics = []
 
-    sigma_window = []
-    sigma_window_len = 2
-    change_statistics = []
+    
     for i in range(START, NUM_RUNS+START):
+        sigma_window = []
+        sigma_window_len = 2
+        change_statistics = []
+    
         print("starting epoch: ", i, "\n")
         sigma1 = generate_sigma(3*i-2)
         sigma2 = generate_sigma(3*i-1)
@@ -70,11 +74,15 @@ def main(START=1, NUM_RUNS=10):
                 sigma_window.append(oem.get_sigma())
             j += 1
         change_statistics = np.array(change_statistics)
-        return change_statistics
+        res_change_statistics.append(change_statistics)
+    
+    return np.array(res_change_statistics)
     
 
 if __name__ == "__main__":
     change_statistics = main(1,10)
+    # mean_change_statistics = np.mean(change_statistics, 0)
+    #plt.scatter(range(mean_change_statistics.shape[0]), mean_change_statistics[:,2], s=10,c='blue')
     
     #plt.scatter(range(change_statistics.shape[0]), change_statistics[:,0], s=10,c='blue')
     #plt.scatter(range(change_statistics.shape[0]), change_statistics[:,1], s=10,c='blue')

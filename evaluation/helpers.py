@@ -32,19 +32,36 @@ def get_mae(x_imp, x_true):
     return np.mean(np.abs(x_imp - x_true))
         
 
-def get_smae(x_imp, x_true, x_obs):
+def get_smae(x_imp, x_true, x_obs, Med=None, per_type=False, cont_loc=None, bin_loc=None, ord_loc=None):
     """
     gets Scaled Mean Absolute Error (SMAE) between x_imp and x_true
     """
-    scaled_diffs = np.zeros(x_obs.shape[1])
+    error = np.zeros((x_obs.shape[1],2))
     for i, col in enumerate(x_obs.T):
         col_nonan = col[~np.isnan(col)]
         x_true_col = x_true[np.isnan(col),i]
         x_imp_col = x_imp[np.isnan(col),i]
-        median = np.median(col_nonan)
+        if Med is not None:
+            median = Med[i]
+        else:
+            median = np.median(col_nonan)
         diff = np.abs(x_imp_col - x_true_col)
         med_diff = np.abs(median - x_true_col)
-        scaled_diffs[i] = np.sum(diff)/np.sum(med_diff)
+        error[i,0] = np.sum(diff)
+        error[i,1]= np.sum(med_diff)
+    if per_type:
+        if not cont_loc:
+            cont_loc = [True] * 5 + [False] * 10
+        if not bin_loc:
+            bin_loc = [False] * 5 + [True] * 5 + [False] * 5 
+        if not ord_loc:
+            ord_loc = [False] * 10 + [True] * 5
+        loc = [cont_loc, bin_loc, ord_loc]
+        scaled_diffs = np.zeros(3)
+        for j in range(3):
+            scaled_diffs[j] = np.sum(error[loc[j],0])/np.sum(error[loc[j],1])
+    else:
+        scaled_diffs = error[:,0] / error[:,1]
     return scaled_diffs
 
 def get_smae_per_type(x_imp, x_true, x_obs, cont_loc=None, bin_loc=None, ord_loc=None):
@@ -64,6 +81,17 @@ def get_smae_per_type(x_imp, x_true, x_obs, cont_loc=None, bin_loc=None, ord_loc
         scaled_diffs[j] = np.sum(diff)/np.sum(med_diff)
     return scaled_diffs
     
+def get_smae_per_type_online(x_imp, x_true, x_obs, Med):
+    for i, col in enumerate(x_obs.T):
+        missing = np.isnan(col)
+        x_true_col = x_true[np.isnan(col),i]
+        x_imp_col = x_imp[np.isnan(col),i]
+        median = Med[i]
+        diff = np.abs(x_imp_col - x_true_col)
+        med_diff = np.abs(median - x_true_col)
+        scaled_diffs[i] = np.sum(diff)/np.sum(med_diff)
+    return scaled_diffs
+
 
 def get_rmse(x_imp, x_true):
     """
