@@ -148,9 +148,19 @@ class OnlineTransformFunction():
         # the lower endpoint of the interval for the cdf
         ecdf = ECDF(window)
         unique = np.unique(window)
-        threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
-        z_lower_obs = norm.ppf(ecdf(x_batch_obs - threshold))
-        z_upper_obs = norm.ppf(ecdf(x_batch_obs + threshold))
+        if unique.shape[0] > 1:
+            threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
+            z_lower_obs = norm.ppf(ecdf(x_batch_obs - threshold))
+            z_upper_obs = norm.ppf(ecdf(x_batch_obs + threshold))
+        else:
+            z_upper_obs = np.inf
+            z_lower_obs = -np.inf
+            # If the window at j-th column only has one unique value, 
+            # the final imputation will be the unqiue value regardless of the EM iteration.
+            # In offline setting, we don't allow this happen.
+            # In online setting, when it happens, 
+            # we use -inf to inf to ensure tha EM iteration does not break down due to singularity
+            print("window contains a single value")
         return z_lower_obs, z_upper_obs
 
 

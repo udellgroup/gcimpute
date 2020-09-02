@@ -5,14 +5,6 @@ from evaluation.helpers import *
 import pandas as pd
 import time
 
-def generate_sigma(seed=0):
-    np.random.seed(seed)
-    W = np.random.normal(size=(15,15))
-    covariance = np.matmul(W,W.T)
-    D = np.diagonal(covariance)
-    D_neg_half = np.diag(1.0/np.sqrt(D))
-    return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
-
 if __name__ == "__main__":
     scaled_errors = []
     smaes = []
