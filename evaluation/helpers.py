@@ -47,6 +47,24 @@ def get_smae(x_imp, x_true, x_obs):
         scaled_diffs[i] = np.sum(diff)/np.sum(med_diff)
     return scaled_diffs
 
+def get_smae_per_type(x_imp, x_true, x_obs, cont_loc=None, bin_loc=None, ord_loc=None):
+    if not cont_loc:
+        cont_loc = [True] * 5 + [False] * 10
+    if not bin_loc:
+        bin_loc = [False] * 5 + [True] * 5 + [False] * 5 
+    if not ord_loc:
+        ord_loc = [False] * 10 + [True] * 5
+    loc = [cont_loc, bin_loc, ord_loc]
+    scaled_diffs = np.zeros(3)
+    for j in range(3):
+        missing = np.isnan(x_obs[:,loc[j]])
+        med = np.median(x_obs[:,loc[j]][~missing])
+        diff = np.abs(x_imp[:,loc[j]][missing] - x_true[:,loc[j]][missing])
+        med_diff = np.abs(med - x_true[:,loc[j]][missing])
+        scaled_diffs[j] = np.sum(diff)/np.sum(med_diff)
+    return scaled_diffs
+    
+
 def get_rmse(x_imp, x_true):
     """
     gets Root Mean Squared Error (RMSE) between x_imp and x_true

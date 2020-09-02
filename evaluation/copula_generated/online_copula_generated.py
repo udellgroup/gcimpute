@@ -18,7 +18,11 @@ if __name__ == "__main__":
     runtimes = []
     NUM_RUNS = 1
     n = 2000
-    max_iter = 200
+    max_iter = 100
+    BATCH_SIZE=40
+    WINDOW_SIZE=500
+    NUM_ORD_UPDATES = 1
+    batch_c = 8
     for i in range(1,NUM_RUNS+1):
         np.random.seed(i)
         print("starting epoch: " + str(i))
@@ -32,16 +36,9 @@ if __name__ == "__main__":
             X[:,j] = cont_to_ord(X[:,j], k=2*(j<10)+5*(j>=10))
         cont_indices = np.array([True] * 5 + [False] * 10)
         ord_indices = np.array([False] * 5 + [True] * 10)
-        #X[:,10:] = expon.ppf(norm.cdf(X[:,10:]), scale = 3)
-        #for j in range(10):
-         #   X[:,j] = cont_to_ord(X[:,j], k=2*(j<5)+5*(j>=5))
-        #cont_indices = np.array([False] * 10 + [True] * 5)
-        #ord_indices =  np.array([True] * 10 + [False] * 5)
-        # mask a given % of entries
+        # masking 
         MASK_NUM = 2
         X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
-        BATCH_SIZE=40
-        WINDOW_SIZE=500
         
         oem = OnlineExpectationMaximization(cont_indices, ord_indices, window_size=WINDOW_SIZE)
         start_time = time.time()
@@ -55,6 +52,7 @@ if __name__ == "__main__":
                 indices = np.concatenate((np.arange(end), np.arange(start, n, 1)))
             else:
                 indices = np.arange(start, end, 1)
+            decay_coef = batch_c/(j+batch_c)
             X_imp[indices,:] = oem.partial_fit_and_predict(X_masked[indices,:],max_workers = 4, decay_coef=0.5)
             j +=1 
         end_time = time.time()

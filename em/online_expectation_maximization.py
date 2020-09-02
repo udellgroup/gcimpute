@@ -109,7 +109,7 @@ def _batch_em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_upda
 
 
 class OnlineExpectationMaximization(ExpectationMaximization):
-    def __init__(self, cont_indices, ord_indices, window_size=0, sigma_init=None):
+    def __init__(self, cont_indices, ord_indices, window_size=200, sigma_init=None):
         self.transform_function = OnlineTransformFunction(cont_indices, ord_indices, window_size=window_size)
         self.cont_indices = cont_indices
         self.ord_indices = ord_indices
@@ -124,7 +124,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         self.iteration = 1
 
 
-    def partial_fit_and_predict(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.1):
+    def partial_fit_and_predict(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -149,7 +149,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged, X_batch)
         return X_imp
 
-    def _fit_covariance(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.1):
+    def _fit_covariance(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5):
         """
         Updates the covariance matrix of the gaussian copula using the data 
         in X_batch and returns the imputed latent values corresponding to 

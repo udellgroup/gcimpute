@@ -10,7 +10,7 @@ def _batch_em_step_body_(args):
     """
     return _batch_em_step_body(*args)
 
-def _batch_em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates):
+def _batch_em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates=1):
     """
     Iterate the rows over provided matrix 
     """
@@ -24,7 +24,7 @@ def _batch_em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates):
         C += c
     return C, Z_imp, Z
 
-def _batch_em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
+def _batch_em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates=1):
     """
     The body of the em algorithm for each row
     Returns a new latent row, latent imputed row and C matrix, which, when added
@@ -111,7 +111,7 @@ def _batch_em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_upda
 
 
 class BatchExpectationMaximization(ExpectationMaximization):
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=1, max_ord=100, batch_size=64, batch_c=1, num_ord_updates=2, verbose=False):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=1, max_ord=100, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False):
         """
         Fits a Gaussian Copula and imputes missing values in X.
         Args:
@@ -149,7 +149,7 @@ class BatchExpectationMaximization(ExpectationMaximization):
         X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
         return X_imp, sigma_rearranged
 
-    def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers=1, batch_size=64, batch_c=1, num_ord_updates=2, verbose=False):
+    def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers=1, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False):
         """
         Fits the covariance matrix of the gaussian copula using the data 
         in X and returns the imputed latent values corresponding to 
@@ -206,7 +206,7 @@ class BatchExpectationMaximization(ExpectationMaximization):
             sigma_batch = np.cov(Z_imp[indices,:], rowvar=False) + C_batch
             sigma_batch = self._project_to_correlation(sigma_batch)
             #decay_coef = 1/(np.sqrt(batch_iter + 1))
-            decay_coef = min(batch_c/(batch_iter + 1), 1)
+            decay_coef = batch_c/(batch_iter + 1 + batch_c)
             #decay_coef = 0.5
             sigma = sigma_batch*decay_coef + (1 - decay_coef)*prev_sigma
             if self._get_scaled_diff(prev_sigma, sigma) < threshold:

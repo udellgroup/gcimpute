@@ -4,7 +4,8 @@ from scipy.stats import random_correlation, norm, expon
 from evaluation.helpers import *
 import time
 
-def generate_sigma():
+def generate_sigma(seed=0):
+    np.random.seed(seed)
     W = np.random.normal(size=(15,15))
     covariance = np.matmul(W,W.T)
     D = np.diagonal(covariance)
@@ -19,12 +20,14 @@ if __name__ == "__main__":
     NUM_STEPS = 10
     BATCH_SIZE = 40
     MAX_ITER = 100
+    NUM_ORD_UPDATES = 1
+    batch_c = 7
     runtimes = []
     for i in range(1,NUM_STEPS+1):
         np.random.seed(i)
         print("starting epoch: " + str(i))
         print("\n")
-        sigma = generate_sigma()
+        sigma = generate_sigma(i)
         mean = np.zeros(sigma.shape[0])
         X = np.random.multivariate_normal(mean, sigma, size=2000)
         X[:,:5] = expon.ppf(norm.cdf(X[:,:5]), scale = 3)
@@ -36,16 +39,16 @@ if __name__ == "__main__":
         X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
         bem = BatchExpectationMaximization()
         start_time = time.time()
-        X_imp, sigma_imp = bem.impute_missing(X_masked, max_iter=MAX_ITER, batch_size=BATCH_SIZE, threshold = 0.01, max_workers=4)
+        X X_imp, sigma_imp = bem.impute_missing(X_masked, 
+            max_iter=MAX_ITER, batch_size=BATCH_SIZE,  batch_c = batch_c, max_workers=4, verbose=True, num_ord_updates=NUM_ORD_UPDATES)
         end_time = time.time()
         runtimes.append(end_time - start_time)
         scaled_error = get_scaled_error(sigma_imp, sigma)
         smae = get_smae(X_imp, X, X_masked)
         # update error to be normalized
-        rmse = get_scaled_error(X_imp[:,:5], X[:,:5])
         scaled_errors.append(scaled_error)
         smaes.append(smae)
-        rmses.append(rmse)
+
     print("mean of scaled errors is: ")
     print(np.mean(np.array(scaled_errors)))
     print("std deviation of scaled errors is: ")
@@ -66,11 +69,6 @@ if __name__ == "__main__":
     print(np.mean(std_dev_smaes[5:10]))
     print("std dev ord smaes are: ")
     print(np.mean(std_dev_smaes[10:]))
-    print("\n")
-    print("mean of rmses is: ")
-    print(np.mean(np.array(rmses),axis=0))
-    print("std deviation of rmses is: ")
-    print(np.std(np.array(rmses),axis=0))
     print("\n")
     print("mean time for run is: ")
     print(np.mean(np.array(runtimes)))
