@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import time
 from scipy.stats import random_correlation, norm, expon
 import pandas as pd
+import matplotlib.pyplot as plt
 
 def main(START=1, NUM_RUNS=10):
     NUM_SAMPLES = 10000
@@ -13,12 +14,11 @@ def main(START=1, NUM_RUNS=10):
     WINDOW_SIZE = 200
     NUM_ORD_UPDATES = 2
     NUM_BATCH = int(NUM_SAMPLES*3/BATCH_SIZE)
-    smae_online_trials = np.zeros((NUM_RUNS, NUM_BATCH, 3))
-    smae_offline_trials = np.zeros((NUM_RUNS, NUM_BATCH, 3))
+
+    sigma_window = []
+    sigma_window_len = 2
+    change_statistics = []
     for i in range(START, NUM_RUNS+START):
-        smae_conts = []
-        smae_ords = []
-        smae_bins = []
         print("starting epoch: ", i, "\n")
         sigma1 = generate_sigma(3*i-2)
         sigma2 = generate_sigma(3*i-1)
@@ -39,20 +39,13 @@ def main(START=1, NUM_RUNS=10):
         # X_masked = mask_one_per_row(X)
         MASK_NUM = 2
         X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
-        
-        # offline 
-        bem = BatchExpectationMaximization() # Switch to batch implementation for acceleration
-        start_time = time.time()
-        X_imp_offline, _ = bem.impute_missing(X_masked, max_workers=4, batch_c=5, max_iter=2*NUM_BATCH)
-        end_time = time.time()
-        print("offline time: "+str(end_time-start_time))
+
         
         # online 
         oem = OnlineExpectationMaximization(cont_indices, ord_indices, window_size=WINDOW_SIZE)
+        X_imp = np.empty(X.shape)
         j = 0
-        start_time = time.time()
         X_imp_online = np.zeros(X_masked.shape)
-        #print(X_masked.shape, X_imp.shape, X.shape)
         while j<NUM_BATCH:
             start = j*BATCH_SIZE
             end = (j+1)*BATCH_SIZE
@@ -61,25 +54,28 @@ def main(START=1, NUM_RUNS=10):
                                                              max_workers = 4, 
                                                              decay_coef=0.5, 
                                                              num_ord_updates=NUM_ORD_UPDATES)
-            # imputation error at each batch
-            smae_online_trials[i-1,j,:] = get_smae_per_type(X_imp_online[start:end,:], X[start:end,:], X_masked[start:end,:])
-            smae_offline_trials[i-1,j,:] = get_smae_per_type(X_imp_offline[start:end,:], X[start:end,:], X_masked[start:end,:])
+            if j>=sigma_window_len:
+                sigma_new = oem.get_sigma()
+                dist = np.zeros((sigma_window_len, 3))
+                for t,sigma_old in enumerate(sigma_window):
+                    u, s, vh = np.linalg.svd(sigma_old)
+                    factor = (u * np.sqrt(1/s) ) @ vh
+                    diff = factor @ sigma_new @ factor
+                    _, s, _ = np.linalg.svd(diff)
+                    dist[t,:] = max(abs(s-1)), np.sum(abs(s-1)), np.linalg.norm(diff-np.identity(15))
+                change_statistics.append(np.max(dist,0))
+                sigma_window.pop(0)
+                sigma_window.append(sigma_new)
+            else:
+                sigma_window.append(oem.get_sigma())
             j += 1
-        end_time = time.time()
-        print("online time: "+str(end_time-start_time))
+        change_statistics = np.array(change_statistics)
+        return change_statistics
     
-    smae_online= np.mean(smae_online_trials, 0)
-    smae_offline= np.mean(smae_offline_trials, 0)
-    smae_means = pd.DataFrame(np.concatenate((smae_online, smae_offline), 1))
-    smae_means.to_csv("smae_means.csv")
-    smae_online= np.std(smae_online_trials, 0)
-    smae_offline= np.std(smae_offline_trials, 0)
-    smae_stds = pd.DataFrame(np.concatenate((smae_online, smae_offline), 1))
-    smae_stds.to_csv("smae_stds.csv")
-    
-    return smae_means, smae_stds
-
 
 if __name__ == "__main__":
-    smae_means, smae_stds = main(1,10)
+    change_statistics = main(1,10)
     
+    #plt.scatter(range(change_statistics.shape[0]), change_statistics[:,0], s=10,c='blue')
+    #plt.scatter(range(change_statistics.shape[0]), change_statistics[:,1], s=10,c='blue')
+    #plt.scatter(range(change_statistics.shape[0]), change_statistics[:,2], s=10,c='blue')
