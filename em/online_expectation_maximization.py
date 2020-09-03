@@ -124,7 +124,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         self.iteration = 1
 
 
-    def partial_fit_and_predict(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5):
+    def partial_fit_and_predict(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5, update=True):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -138,8 +138,9 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             X_imp (matrix): X_batch with missing values imputed
         """
         # update marginals with the new batch
-        self.transform_function.partial_fit(X_batch)
-        Z_batch_imp = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef)
+        if update:
+            self.transform_function.partial_fit(X_batch)
+        Z_batch_imp = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef, update)
         # Rearrange Z_imp so that it's columns correspond to the columns of X
         Z_imp_rearranged = np.empty(X_batch.shape)
         Z_imp_rearranged[:,self.ord_indices] = Z_batch_imp[:,:np.sum(self.ord_indices)]
@@ -149,7 +150,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged, X_batch)
         return X_imp
 
-    def _fit_covariance(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5):
+    def _fit_covariance(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5, update=True):
         """
         Updates the covariance matrix of the gaussian copula using the data 
         in X_batch and returns the imputed latent values corresponding to 
@@ -188,9 +189,10 @@ class OnlineExpectationMaximization(ExpectationMaximization):
                 C += C_divide/batch_size
         sigma = np.cov(Z_imp, rowvar=False) + C
         sigma = self._project_to_correlation(sigma)
-        self.sigma = sigma*decay_coef + (1 - decay_coef)*prev_sigma
-        prev_sigma = self.sigma
-        self.iteration += 1
+        if update:
+            self.sigma = sigma*decay_coef + (1 - decay_coef)*prev_sigma
+            prev_sigma = self.sigma
+            self.iteration += 1
         return Z_imp
 
     def get_sigma(self):
