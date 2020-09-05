@@ -38,9 +38,14 @@ def get_smae(x_imp, x_true, x_obs, Med=None, per_type=False, cont_loc=None, bin_
     """
     error = np.zeros((x_obs.shape[1],2))
     for i, col in enumerate(x_obs.T):
+        test = np.bitwise_and(~np.isnan(x_true[:,i]), np.isnan(col))
+        if np.sum(test) == 0:
+            error[i,0] = np.nan
+            error[i,1] = np.nan
+            continue
         col_nonan = col[~np.isnan(col)]
-        x_true_col = x_true[np.isnan(col),i]
-        x_imp_col = x_imp[np.isnan(col),i]
+        x_true_col = x_true[test,i]
+        x_imp_col = x_imp[test,i]
         if Med is not None:
             median = Med[i]
         else:

@@ -205,11 +205,10 @@ class BatchExpectationMaximization(ExpectationMaximization):
                     C_batch += C_divide/batch_size
             sigma_batch = np.cov(Z_imp[indices,:], rowvar=False) + C_batch
             sigma_batch = self._project_to_correlation(sigma_batch)
-            #decay_coef = 1/(np.sqrt(batch_iter + 1))
             decay_coef = batch_c/(batch_iter + 1 + batch_c)
-            #decay_coef = 0.5
             sigma = sigma_batch*decay_coef + (1 - decay_coef)*prev_sigma
-            if self._get_scaled_diff(prev_sigma, sigma) < threshold:
+            if self._get_scaled_diff(prev_sigma, sigma) < threshold: 
+            # in this situation, possibly update the imputation for all points that haven't been met during this pass
                 if verbose: print('Convergence at batch iteration '+str(batch_iter+1))
                 break
             prev_sigma = sigma

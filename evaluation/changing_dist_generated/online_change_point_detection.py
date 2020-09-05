@@ -1,12 +1,11 @@
 from em.online_expectation_maximization import OnlineExpectationMaximization
-from em.batch_expectation_maximization import BatchExpectationMaximization
 import numpy as np
 from evaluation.helpers import *
 import matplotlib.pyplot as plt
 import time
 from scipy.stats import random_correlation, norm, expon
 import pandas as pd
-import matplotlib.pyplot as plt
+
 
 def main(START=1, NUM_RUNS=10):
     NUM_SAMPLES = 10000
@@ -81,9 +80,6 @@ def main(START=1, NUM_RUNS=10):
 
 if __name__ == "__main__":
     change_statistics = main(1,10)
-    # mean_change_statistics = np.mean(change_statistics, 0)
+    mean_change_statistics = np.mean(change_statistics, 0)
     #plt.scatter(range(mean_change_statistics.shape[0]), mean_change_statistics[:,2], s=10,c='blue')
     
-    #plt.scatter(range(change_statistics.shape[0]), change_statistics[:,0], s=10,c='blue')
-    #plt.scatter(range(change_statistics.shape[0]), change_statistics[:,1], s=10,c='blue')
-    #plt.scatter(range(change_statistics.shape[0]), change_statistics[:,2], s=10,c='blue')

@@ -7,19 +7,21 @@ import time
 from scipy.stats import random_correlation, norm, expon
 import pandas as pd
 
-def main(START=1, NUM_RUNS=10):
-    NUM_SAMPLES = 10000
+def main(START=1, NUM_RUNS=20):
+    NUM_SAMPLES = 4000
     BATCH_SIZE = 40
     WINDOW_SIZE = 200
     NUM_ORD_UPDATES = 2
     NUM_BATCH = int(NUM_SAMPLES*3/BATCH_SIZE)
     smae_online_trials = np.zeros((NUM_RUNS, NUM_BATCH, 3))
     smae_offline_trials = np.zeros((NUM_RUNS, NUM_BATCH, 3))
+    res_change_statistics = []
     for i in range(START, NUM_RUNS+START):
-        smae_conts = []
-        smae_ords = []
-        smae_bins = []
         print("starting epoch: ", i, "\n")
+        sigma_window = []
+        sigma_window_len = 2
+        change_statistics = []
+        
         sigma1 = generate_sigma(3*i-2)
         sigma2 = generate_sigma(3*i-1)
         sigma3 = generate_sigma(3*i)
@@ -45,12 +47,11 @@ def main(START=1, NUM_RUNS=10):
         start_time = time.time()
         X_imp_offline, _ = bem.impute_missing(X_masked, max_workers=4, batch_c=5, max_iter=2*NUM_BATCH)
         end_time = time.time()
-        print("offline time: "+str(end_time-start_time))
+
         
         # online 
         oem = OnlineExpectationMaximization(cont_indices, ord_indices, window_size=WINDOW_SIZE)
         j = 0
-        start_time = time.time()
         X_imp_online = np.zeros(X_masked.shape)
         #print(X_masked.shape, X_imp.shape, X.shape)
         Med = np.nanmedian(X_masked,0)
@@ -62,14 +63,29 @@ def main(START=1, NUM_RUNS=10):
                                                              max_workers = 4, 
                                                              decay_coef=0.5, 
                                                              num_ord_updates=NUM_ORD_UPDATES)
+            if j>=sigma_window_len:
+                sigma_new = oem.get_sigma()
+                dist = np.zeros((sigma_window_len, 3))
+                for t,sigma_old in enumerate(sigma_window):
+                    u, s, vh = np.linalg.svd(sigma_old)
+                    factor = (u * np.sqrt(1/s) ) @ vh
+                    diff = factor @ sigma_new @ factor
+                    _, s, _ = np.linalg.svd(diff)
+                    dist[t,:] = max(abs(s-1)), np.sum(abs(s-1)), np.linalg.norm(diff-np.identity(15))
+                change_statistics.append(np.max(dist,0))
+                sigma_window.pop(0)
+                sigma_window.append(sigma_new)
+            else:
+                sigma_window.append(oem.get_sigma())
             # imputation error at each batch
             #smae_online_trials[i-1,j,:] = get_smae_per_type(X_imp_online[start:end,:], X[start:end,:], X_masked[start:end,:])
             #smae_offline_trials[i-1,j,:] = get_smae_per_type(X_imp_offline[start:end,:], X[start:end,:], X_masked[start:end,:])
             smae_online_trials[i-1,j,:] = get_smae(X_imp_online[start:end,:], X[start:end,:], X_masked[start:end,:], Med, True)
             smae_offline_trials[i-1,j,:] = get_smae(X_imp_offline[start:end,:], X[start:end,:], X_masked[start:end,:], Med, True)
             j += 1
-        end_time = time.time()
-        print("online time: "+str(end_time-start_time))
+        change_statistics = np.array(change_statistics)
+        res_change_statistics.append(change_statistics)
+
     
     smae_online= np.mean(smae_online_trials, 0)
     smae_offline= np.mean(smae_offline_trials, 0)
@@ -79,10 +95,13 @@ def main(START=1, NUM_RUNS=10):
     smae_offline= np.std(smae_offline_trials, 0)
     smae_stds = pd.DataFrame(np.concatenate((smae_online, smae_offline), 1))
     smae_stds.to_csv("smae_stds.csv")
+    mean_change_statistics = np.mean(change_statistics, 0)
+    pd.DataFrame(mean_change_statistics).to_csv("change_statistics.csv")
     
-    return smae_means, smae_stds
+    return smae_means, smae_stds, np.array(res_change_statistics)
 
 
 if __name__ == "__main__":
-    smae_means, smae_stds = main(1,10)
+    smae_means, smae_stds, change_statistics = main(1,20)
+    #mean_change_statistics = np.mean(change_statistics, 0)
     
