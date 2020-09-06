@@ -177,16 +177,20 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         prev_sigma = self.sigma
         Z_imp = np.zeros((batch_size, p))
         C = np.zeros((p, p))
-        divide = batch_size/max_workers * np.arange(max_workers+1)
-        divide = divide.astype(int)
-        args = [(Z[divide[i]:divide[i+1],:], Z_ord_lower[divide[i]:divide[i+1],:], Z_ord_upper[divide[i]:divide[i+1],:], prev_sigma, num_ord_updates) for i in range(max_workers)]
-        # divide each batch into max_workers parts instead of n parts
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
-            res = pool.map(_batch_em_step_body_, args)
-            for i,(C_divide, Z_imp_divide, Z_divide) in enumerate(res):
-                Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
-                Z[divide[i]:divide[i+1],:] = Z_divide # not necessary if we only do on EM iteration 
-                C += C_divide/batch_size
+        if max_workers==1:
+            C, Z_imp, Z = _batch_em_step_body(Z, Z_ord_lower, Z_ord_upper, prev_sigma, num_ord_updates)
+        else:
+            divide = batch_size/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [(Z[divide[i]:divide[i+1],:], Z_ord_lower[divide[i]:divide[i+1],:], Z_ord_upper[divide[i]:divide[i+1],:], prev_sigma, num_ord_updates) for i in range(max_workers)]
+            # divide each batch into max_workers parts instead of n parts
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                res = pool.map(_batch_em_step_body_, args)
+                for i,(C_divide, Z_imp_divide, Z_divide) in enumerate(res):
+                    Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
+                    Z[divide[i]:divide[i+1],:] = Z_divide # not necessary if we only do on EM iteration 
+                    C += C_divide
+        C = C/batch_size
         sigma = np.cov(Z_imp, rowvar=False) + C
         sigma = self._project_to_correlation(sigma)
         if update:

@@ -164,7 +164,7 @@ def mask(X, mask_fraction, seed=0):
             raise ValueError("Failure in Masking data without empty rows")
     return X_masked, mask_indices, seed
 
-def mask_one_per_row(X, seed=0):
+def mask_per_row(X, seed=0, size=1):
     """
     Maskes one element uniformly at random from each row of X
     """
@@ -172,7 +172,7 @@ def mask_one_per_row(X, seed=0):
     n,p = X.shape
     for i in range(n):
         np.random.seed(seed*n+i)
-        rand_idx = np.random.choice(p)
+        rand_idx = np.random.choice(p, size)
         X_masked[i,rand_idx] = np.nan
     return X_masked
 

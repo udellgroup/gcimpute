@@ -52,18 +52,7 @@ class OnlineTransformFunction():
                     self.update_pos[col_num] += 1 
                     if self.update_pos[col_num] >= self.window_size:
                         self.update_pos[col_num] = 0
-        # IT SUFFICES TO UPDATE THE WINDOW WHEN NEW DATA POINTS COME IN 
-        #cont_entries = self.window[:, self.cont_indices]
-        # update all the continuos marginal estimates
-        #for cont_entry, cont_online_marginal in zip(cont_entries.T, self.cont_online_marginals):
-         #   cont_online_marginal.partial_fit(cont_entry[~np.isnan(cont_entry)]) 
 
-        #ord_entries = self.window[:, self.ord_indices]
-        # update all the ordinal marginal estimates
-        #for ord_entry, ord_online_marginal in zip(ord_entries.T, self.ord_online_marginals):
-        #    ord_online_marginal.partial_fit(ord_entry[~np.isnan(ord_entry)])
-        #print(np.sum(np.isnan(self.window)))
-        #print(np.sum(np.isnan(self.window), 0))
 
     def partial_evaluate_cont_latent(self, X_batch):
         """
@@ -106,7 +95,9 @@ class OnlineTransformFunction():
         for i in range(np.sum(self.cont_indices)):
             missing = np.isnan(X_cont[:,i])
             ##print("length of missing : " +str(sum(missing)) + " at cont col "+str(i))
-            X_cont_imp[missing,i] = self.get_cont_observed(Z_cont[missing,i], window_cont[:,i])
+            if np.sum(missing)>0:
+                #print(np.sum(missing))
+                X_cont_imp[missing,i] = self.get_cont_observed(Z_cont[missing,i], window_cont[:,i])
         return X_cont_imp
 
     def partial_evaluate_ord_observed(self, Z_batch, X_batch):
@@ -119,7 +110,8 @@ class OnlineTransformFunction():
         window_ord = self.window[:,self.ord_indices]
         for i in range(np.sum(self.ord_indices)):
             missing = np.isnan(X_ord[:,i])
-            X_ord_imp[missing,i] = self.get_ord_observed(Z_ord[missing,i], window_ord[:,i])
+            if np.sum(missing)>0:
+                X_ord_imp[missing,i] = self.get_ord_observed(Z_ord[missing,i], window_ord[:,i])
         return X_ord_imp
 
     def get_cont_latent(self, x_batch_obs, window):
@@ -137,8 +129,10 @@ class OnlineTransformFunction():
         to continuous entries to the corresponding imputed oberserved value
         """
         #print(len(z_batch_missing))
+        #print("max z:" +str(max(z_batch_missing)) + "min z:" +str(min(z_batch_missing)))
         quantiles = norm.cdf(z_batch_missing)
         #print("max quantiles:" +str(max(quantiles)) + "min quantiles:" +str(min(quantiles)))
+        #print("mean quantiles:" +str(np.mean(quantiles)) + "std quantiles:" +str(np.std(quantiles)))
         return np.quantile(window, quantiles)
 
     def get_ord_latent(self, x_batch_obs, window):
