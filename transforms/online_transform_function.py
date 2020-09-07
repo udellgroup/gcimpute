@@ -32,7 +32,10 @@ class OnlineTransformFunction():
             # the initial sampling should be done column-wisely
             mean_ord = np.nanmean(X_batch[:, self.cont_indices])
             std_ord = np.nanstd(X_batch[:, self.cont_indices])
-            self.window[:, self.cont_indices] = np.random.normal(mean_ord, std_ord, size=(self.window_size, np.sum(self.cont_indices)))
+            if np.isnan(mean_ord):
+                self.window[:, self.cont_indices] = np.random.normal(0, 1, size=(self.window_size, np.sum(self.cont_indices)))
+            else:
+                self.window[:, self.cont_indices] = np.random.normal(mean_ord, std_ord, size=(self.window_size, np.sum(self.cont_indices)))
             # ord_values = np.unique(X_batch[:, self.ord_indices]) # np.fromfunction(lambda i,j: np.random.choice(ord_values), size=self.window[:, self.ord_indices].shape)
             #min_ord = min(X_batch[:, self.ord_indices])
             #max_ord = max(X_batch[:, self.ord_indices]) + 1
@@ -97,6 +100,9 @@ class OnlineTransformFunction():
             ##print("length of missing : " +str(sum(missing)) + " at cont col "+str(i))
             if np.sum(missing)>0:
                 #print(np.sum(missing))
+                ## print("missing", missing)
+                ## print("Z_cont[missing,i]", Z_cont[missing,i])
+                ## print("window_cont[:,i]", window_cont[:,i])
                 X_cont_imp[missing,i] = self.get_cont_observed(Z_cont[missing,i], window_cont[:,i])
         return X_cont_imp
 
@@ -133,6 +139,9 @@ class OnlineTransformFunction():
         quantiles = norm.cdf(z_batch_missing)
         #print("max quantiles:" +str(max(quantiles)) + "min quantiles:" +str(min(quantiles)))
         #print("mean quantiles:" +str(np.mean(quantiles)) + "std quantiles:" +str(np.std(quantiles)))
+        ## print("z_batch_missing", z_batch_missing)
+        ## print("window", window)
+        ## print("quantiles", quantiles)
         return np.quantile(window, quantiles)
 
     def get_ord_latent(self, x_batch_obs, window):
