@@ -18,7 +18,6 @@ class OnlineTransformFunction():
         p = len(cont_indices)
         self.window_size = window_size
         self.window = np.array([[np.nan for x in range(p)] for y in range(self.window_size)]).astype(np.float64)
-        #print(self.window.shape)
         self.update_pos = np.zeros(p).astype(np.int)
         if X is not None:
             self.partial_fit(X)
@@ -48,8 +47,6 @@ class OnlineTransformFunction():
                         self.window[:,j].fill(0)
                     else:
                         self.window[:, j] = np.random.randint(min_ord, max_ord, size=self.window_size)
-        #print(np.sum(np.isnan(self.window)))
-        #print(np.sum(np.isnan(self.window), 0))
         for row in X_batch:
             for col_num in range(len(row)):
                 data = row[col_num]
@@ -100,12 +97,7 @@ class OnlineTransformFunction():
         window_cont = self.window[:,self.cont_indices]
         for i in range(np.sum(self.cont_indices)):
             missing = np.isnan(X_cont[:,i])
-            ##print("length of missing : " +str(sum(missing)) + " at cont col "+str(i))
             if np.sum(missing)>0:
-                #print(np.sum(missing))
-                print("missing", missing)
-                print("Z_cont[missing,i]", Z_cont[missing,i])
-                print("window_cont[:,i]", window_cont[:,i])
                 X_cont_imp[missing,i] = self.get_cont_observed(Z_cont[missing,i], window_cont[:,i])
         return X_cont_imp
 
@@ -137,14 +129,7 @@ class OnlineTransformFunction():
         Applies marginal scaling to convert the latent entries in Z corresponding
         to continuous entries to the corresponding imputed oberserved value
         """
-        #print(len(z_batch_missing))
-        #print("max z:" +str(max(z_batch_missing)) + "min z:" +str(min(z_batch_missing)))
         quantiles = norm.cdf(z_batch_missing)
-        #print("max quantiles:" +str(max(quantiles)) + "min quantiles:" +str(min(quantiles)))
-        #print("mean quantiles:" +str(np.mean(quantiles)) + "std quantiles:" +str(np.std(quantiles)))
-        print("z_batch_missing", z_batch_missing)
-        print("window", window)
-        print("quantiles", quantiles)
         return np.quantile(window, quantiles)
 
     def get_ord_latent(self, x_batch_obs, window):

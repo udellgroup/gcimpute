@@ -140,8 +140,10 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         # update marginals with the new batch
         if update:
             self.transform_function.partial_fit(X_batch)
+        # print("X_batch", X_batch)
         Z_batch_imp = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef, update)
         # Rearrange Z_imp so that it's columns correspond to the columns of X
+        # print("Z_batch_imp", Z_batch_imp)
         Z_imp_rearranged = np.empty(X_batch.shape)
         Z_imp_rearranged[:,self.ord_indices] = Z_batch_imp[:,:np.sum(self.ord_indices)]
         Z_imp_rearranged[:,self.cont_indices] = Z_batch_imp[:,np.sum(self.ord_indices):]
