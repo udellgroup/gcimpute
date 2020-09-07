@@ -96,6 +96,11 @@ def _batch_em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_upda
     Z_imp_row[obs_indices] = Z_obs
     # MISSING ELEMENTS
     if len(missing_indices) > 0:
+        #print("J_obs_missing: "+str(J_obs_missing.shape))
+        #print("Z_obs: "+str(Z_obs.shape))
+        #print("Z_obs nan: "+str(np.sum(np.isnan(Z_obs))))
+        #print("Z_obs max: "+str(np.max(Z_obs)))
+        #print("Z_obs min: "+str(np.min(Z_obs)))
         Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs)
         # variance expectation and imputation
         if len(ord_obs_indices) >= 1 and len(obs_indices) >= 2 and np.sum(var_ordinal) > 0:
@@ -194,7 +199,12 @@ class OnlineExpectationMaximization(ExpectationMaximization):
                     C += C_divide
         C = C/batch_size
         sigma = np.cov(Z_imp, rowvar=False) + C
+        #print("Zimp nan: "+str(np.sum(np.isnan(Z_imp))))
+        #print("incremental sigma: ")
+        #print("sigma nan: "+str(np.sum(np.isnan(sigma))))
         sigma = self._project_to_correlation(sigma)
+        #print("incremental sigma correlation: ")
+        #print(sigma)
         if update:
             self.sigma = sigma*decay_coef + (1 - decay_coef)*prev_sigma
             prev_sigma = self.sigma

@@ -122,7 +122,11 @@ class OnlineTransformFunction():
         """
         ecdf = ECDF(window)
         l = len(window)
-        return norm.ppf((l / (l + 1.0)) * ecdf(x_batch_obs))
+        q = (l / (l + 1.0)) * ecdf(x_batch_obs)
+        q[q==0] = l/(l+1)/2
+        if any(q==0):
+            print("In get_cont_latent, 0 quantile appears")
+        return norm.ppf(q)
 
     def get_cont_observed(self, z_batch_missing, window):
         """
