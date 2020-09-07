@@ -44,7 +44,10 @@ class OnlineTransformFunction():
                 if loc:
                     min_ord = np.nanmin(X_batch[:, j])
                     max_ord = np.nanmax(X_batch[:,j]) + 1
-                    self.window[:, j] = np.random.randint(min_ord, max_ord, size=self.window_size)
+                    if np.isnan(min_ord):
+                        self.window[:,j].fill(0)
+                    else:
+                        self.window[:, j] = np.random.randint(min_ord, max_ord, size=self.window_size)
         #print(np.sum(np.isnan(self.window)))
         #print(np.sum(np.isnan(self.window), 0))
         for row in X_batch:
@@ -100,9 +103,9 @@ class OnlineTransformFunction():
             ##print("length of missing : " +str(sum(missing)) + " at cont col "+str(i))
             if np.sum(missing)>0:
                 #print(np.sum(missing))
-                ## print("missing", missing)
-                ## print("Z_cont[missing,i]", Z_cont[missing,i])
-                ## print("window_cont[:,i]", window_cont[:,i])
+                print("missing", missing)
+                print("Z_cont[missing,i]", Z_cont[missing,i])
+                print("window_cont[:,i]", window_cont[:,i])
                 X_cont_imp[missing,i] = self.get_cont_observed(Z_cont[missing,i], window_cont[:,i])
         return X_cont_imp
 
@@ -139,9 +142,9 @@ class OnlineTransformFunction():
         quantiles = norm.cdf(z_batch_missing)
         #print("max quantiles:" +str(max(quantiles)) + "min quantiles:" +str(min(quantiles)))
         #print("mean quantiles:" +str(np.mean(quantiles)) + "std quantiles:" +str(np.std(quantiles)))
-        ## print("z_batch_missing", z_batch_missing)
-        ## print("window", window)
-        ## print("quantiles", quantiles)
+        print("z_batch_missing", z_batch_missing)
+        print("window", window)
+        print("quantiles", quantiles)
         return np.quantile(window, quantiles)
 
     def get_ord_latent(self, x_batch_obs, window):
