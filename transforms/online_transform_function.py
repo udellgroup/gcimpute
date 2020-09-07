@@ -29,12 +29,12 @@ class OnlineTransformFunction():
         if np.isnan(self.window[0, 0] ):
             # YX comment: improve the initial sampling as described in lines 12-14
             # the initial sampling should be done column-wisely
-            mean_ord = np.nanmean(X_batch[:, self.cont_indices])
-            std_ord = np.nanstd(X_batch[:, self.cont_indices])
-            if np.isnan(mean_ord):
+            mean_cont = np.nanmean(X_batch[:, self.cont_indices])
+            std_cont = np.nanstd(X_batch[:, self.cont_indices])
+            if np.isnan(mean_cont):
                 self.window[:, self.cont_indices] = np.random.normal(0, 1, size=(self.window_size, np.sum(self.cont_indices)))
             else:
-                self.window[:, self.cont_indices] = np.random.normal(mean_ord, std_ord, size=(self.window_size, np.sum(self.cont_indices)))
+                self.window[:, self.cont_indices] = np.random.normal(mean_cont, std_cont, size=(self.window_size, np.sum(self.cont_indices)))
             # ord_values = np.unique(X_batch[:, self.ord_indices]) # np.fromfunction(lambda i,j: np.random.choice(ord_values), size=self.window[:, self.ord_indices].shape)
             #min_ord = min(X_batch[:, self.ord_indices])
             #max_ord = max(X_batch[:, self.ord_indices]) + 1
@@ -87,25 +87,30 @@ class OnlineTransformFunction():
             Z_ord_lower[~missing,i], Z_ord_upper[~missing,i] = self.get_ord_latent(X_ord[~missing,i], window_ord[:,i])
         return Z_ord_lower, Z_ord_upper
 
-    def partial_evaluate_cont_observed(self, Z_batch, X_batch):
+    def partial_evaluate_cont_observed(self, Z_batch, X_batch=None):
         """
         Transform the latent continous variables in Z_batch into corresponding observations
         """
         Z_cont = Z_batch[:,self.cont_indices]
+        if X_batch is None:
+            X_batch = np.zeros(Z_batch.shape) * np.nan
         X_cont = X_batch[:,self.cont_indices]
         X_cont_imp = np.copy(X_cont)
         window_cont = self.window[:,self.cont_indices]
         for i in range(np.sum(self.cont_indices)):
+            # if X_batch is not provided, missing will be 1:n
             missing = np.isnan(X_cont[:,i])
             if np.sum(missing)>0:
                 X_cont_imp[missing,i] = self.get_cont_observed(Z_cont[missing,i], window_cont[:,i])
         return X_cont_imp
 
-    def partial_evaluate_ord_observed(self, Z_batch, X_batch):
+    def partial_evaluate_ord_observed(self, Z_batch, X_batch=None):
         """
         Transform the latent ordinal variables in Z_batch into corresponding observations
         """
         Z_ord = Z_batch[:,self.ord_indices]
+        if X_batch is None:
+            X_batch = np.zeros(Z_batch.shape) * np.nan
         X_ord = X_batch[:, self.ord_indices]
         X_ord_imp = np.copy(X_ord)
         window_ord = self.window[:,self.ord_indices]

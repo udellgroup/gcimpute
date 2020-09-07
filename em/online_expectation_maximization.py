@@ -129,7 +129,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         self.iteration = 1
 
 
-    def partial_fit_and_predict(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5, update=True):
+    def partial_fit_and_predict(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5, update=True, sigma_out=False):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -146,7 +146,11 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         if update:
             self.transform_function.partial_fit(X_batch)
         # print("X_batch", X_batch)
-        Z_batch_imp = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef, update)
+        res = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef, update, sigma_out)
+        if sigma_out:
+            Z_batch_imp, sigma = res
+        else:
+            Z_batch_imp = res
         # Rearrange Z_imp so that it's columns correspond to the columns of X
         # print("Z_batch_imp", Z_batch_imp)
         Z_imp_rearranged = np.empty(X_batch.shape)
@@ -155,9 +159,12 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         X_imp = np.empty(X_batch.shape)
         X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged, X_batch)
         X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged, X_batch)
-        return X_imp
+        if sigma_out:
+            return X_imp, sigma
+        else:
+            return X_imp
 
-    def _fit_covariance(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5, update=True):
+    def _fit_covariance(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5, update=True, sigma_out=False):
         """
         Updates the covariance matrix of the gaussian copula using the data 
         in X_batch and returns the imputed latent values corresponding to 
@@ -209,14 +216,63 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             self.sigma = sigma*decay_coef + (1 - decay_coef)*prev_sigma
             prev_sigma = self.sigma
             self.iteration += 1
-        return Z_imp
+        if sigma_out:
+            if update:
+                sigma = self.get_sigma()
+            else:
+                sigma = self.get_sigma(sigma*decay_coef + (1 - decay_coef)*prev_sigma)
+            return Z_imp, sigma
+        else:
+            return Z_imp
 
-    def get_sigma(self):
-        sigma_rearranged = np.empty(self.sigma.shape)
-        sigma_rearranged[np.ix_(self.ord_indices,self.ord_indices)] = self.sigma[:np.sum(self.ord_indices),:np.sum(self.ord_indices)]
-        sigma_rearranged[np.ix_(self.cont_indices,self.cont_indices)] = self.sigma[np.sum(self.ord_indices):,np.sum(self.ord_indices):]
-        sigma_rearranged[np.ix_(self.cont_indices,self.ord_indices)] = self.sigma[np.sum(self.ord_indices):,:np.sum(self.ord_indices)]
+    def get_sigma(self, sigma=None):
+        if sigma is None:
+            sigma = self.sigma
+        sigma_rearranged = np.empty(sigma.shape)
+        sigma_rearranged[np.ix_(self.ord_indices,self.ord_indices)] = sigma[:np.sum(self.ord_indices),:np.sum(self.ord_indices)]
+        sigma_rearranged[np.ix_(self.cont_indices,self.cont_indices)] = sigma[np.sum(self.ord_indices):,np.sum(self.ord_indices):]
+        sigma_rearranged[np.ix_(self.cont_indices,self.ord_indices)] = sigma[np.sum(self.ord_indices):,:np.sum(self.ord_indices)]
         sigma_rearranged[np.ix_(self.ord_indices,self.cont_indices)] =  sigma_rearranged[np.ix_(self.cont_indices,self.ord_indices)].T
         return sigma_rearranged
+
+    def change_point_test(self, x_batch, decay_coef, alpha=(0.99, 0.95), nsample=100, max_workers=4):
+        n,p = x_batch.shape
+        xsample = np.random.multivariate_normal(np.zeros(p), self.sigma, (nsample,n))
+        statistics = np.zeros((nsample,3))
+        sigma_old = self.get_sigma()
+        # generate incomplete mixed data samples
+        for i in range(nsample):
+            # mask
+            z = xsample[i,:,:] 
+            x = np.empty(x_batch.shape)
+            x[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(z)
+            x[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(z)
+            loc = np.isnan(x_batch)
+            x[loc] = np.nan
+            xsample[i,:,:] = x
+            _, sigma = self.partial_fit_and_predict(x, decay_coef=decay_coef, max_workers=max_workers, update=False, sigma_out=True)
+            statistics[i,:] = self.get_matrix_diff(sigma_old, sigma)
+            #print("Sigma change after pseudo examples: "+str(self.get_matrix_diff(self.sigma, sigma_old)))
+        # compute test statistics
+        # fit with x_batch, update = true
+        _, sigma = self.partial_fit_and_predict(x_batch, decay_coef=decay_coef, max_workers=max_workers, update=True, sigma_out=True)
+        s = self.get_matrix_diff(sigma_old, sigma)
+        q = np.quantile(statistics, alpha, axis=0)
+        return q, s
+
+
+        return statistics
+
+        # compute test statistics
+    def get_matrix_diff(self, sigma_old, sigma_new):
+        p = sigma_old.shape[0]
+        u, s, vh = np.linalg.svd(sigma_old)
+        factor = (u * np.sqrt(1/s) ) @ vh
+        diff = factor @ sigma_new @ factor
+        _, s, _ = np.linalg.svd(diff)
+        return max(abs(s-1)), np.sum(abs(s-1)), np.linalg.norm(diff-np.identity(p))
+
+
+        
 
     
