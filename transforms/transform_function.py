@@ -1,7 +1,6 @@
 import numpy as np
 from statsmodels.distributions.empirical_distribution import ECDF
 from scipy.stats import norm
-DECIMAL_PRECISION = 3
 class TransformFunction():
     def __init__(self, X, cont_indices, ord_indices):
         self.X = X
@@ -15,13 +14,14 @@ class TransformFunction():
         """
         X_cont = self.X[:,self.cont_indices]
         Z_cont = np.empty(X_cont.shape)
+        n = self.X.shape[0]
         for i, x_col in enumerate(X_cont.T):
-            x_col_noNan = x_col[~np.isnan(x_col)]
+            missing = np.isnan(x_col)
+            x_col_noNan = x_col[~missing]
             ecdf = ECDF(x_col_noNan)
-            n_col = len(x_col_noNan)
-            Z_cont[:,i] = norm.ppf((n_col / (n_col + 1.0)) * ecdf(x_col))
+            Z_cont[:,i] = norm.ppf((n / (n + 1.0)) * ecdf(x_col))
             # re-add the nan values
-            Z_cont[:,i][np.isnan(x_col)] = np.nan
+            Z_cont[missing,i] = np.nan
         return Z_cont
 
     def get_ord_latent(self):
@@ -33,18 +33,17 @@ class TransformFunction():
         Z_ord_lower = np.empty(X_ord.shape)
         Z_ord_upper = np.empty(X_ord.shape)
         for i, x_col in enumerate(X_ord.T):
-            x_col_noNan = x_col[~np.isnan(x_col)]
+            missing = np.isnan(x_col)
+            x_col_noNan = x_col[~missing]
             ecdf = ECDF(x_col_noNan)
-            n_col = len(x_col_noNan)
             unique = np.unique(x_col_noNan)
-            diffs = np.abs(unique[1:] - unique[:-1])
             # half the min differenence between two ordinals
-            threshold = np.min(diffs)/2.0
-            Z_ord_lower[:,i] = norm.ppf((n_col / (n_col + 1.0)) * ecdf(x_col - threshold))
-            Z_ord_upper[:,i] = norm.ppf((n_col / (n_col + 1.0)) * ecdf(x_col + threshold))
+            threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
+            Z_ord_lower[:,i] = norm.ppf(ecdf(x_col - threshold))
+            Z_ord_upper[:,i] = norm.ppf(ecdf(x_col + threshold))
             # re-add the nan values
-            Z_ord_lower[:,i][np.isnan(x_col)] = np.nan
-            Z_ord_upper[:,i][np.isnan(x_col)] = np.nan
+            Z_ord_lower[missing,i] = np.nan
+            Z_ord_upper[missing,i] = np.nan
         return Z_ord_lower, Z_ord_upper
 
     def impute_cont_observed(self, Z):
@@ -56,13 +55,9 @@ class TransformFunction():
         Z_cont = Z[:, self.cont_indices]
         X_imp = np.copy(X_cont)
         for i, x_col in enumerate(X_cont.T):
-            x_col_noNan = x_col[~np.isnan(x_col)]
-            n_col = len(x_col_noNan)
-            X_imp_col = X_imp[:,i]
-            Z_col = Z_cont[:,i]
+            missing = np.isnan(x_col)
             # Only impute missing entries
-            X_imp_col[np.isnan(x_col)] = np.quantile(x_col_noNan, norm.cdf(Z_col)[np.isnan(x_col)])
-            X_imp[:,i] = X_imp_col
+            X_imp[missing,i] = np.quantile(x_col[~missing], norm.cdf(Z_cont[missing,i]))
         return X_imp
 
     def impute_ord_observed(self, Z):
@@ -72,13 +67,14 @@ class TransformFunction():
         """
         X_ord = self.X[:, self.ord_indices]
         Z_ord = Z[:, self.ord_indices]
-        X_imp = np.empty(Z_ord.shape)
+        X_imp = np.copy(X_ord)
         for i, x_col in enumerate(X_ord.T):
-            x_col_noNan = x_col[~np.isnan(x_col)]
-            X_imp[:,i] = self.inverse_ecdf(x_col_noNan, norm.cdf(Z_ord[:,i]))
+            missing = np.isnan(x_col)
+            # only impute missing entries
+            X_imp[missing,i] = self.inverse_ecdf(x_col[~missing], norm.cdf(Z_ord[missing,i]))
         return X_imp
 
-    def inverse_ecdf(self, data, x):
+    def inverse_ecdf(self, data, x, DECIMAL_PRECISION = 3):
         """
         computes the inverse ecdf (quantile) for x with ecdf given by data
         """

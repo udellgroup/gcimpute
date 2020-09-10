@@ -1,0 +1,8 @@
+.vs*
+*.csv
+*.swp
+.id*
+bui*
+dis*
+*__pycache__*
+*.egg*

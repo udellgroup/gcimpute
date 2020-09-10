@@ -16,6 +16,8 @@ def cont_to_ord(x, k):
     convert entries of x to an ordinal with k levels using evenenly space thresholds
     """
     # make the cutoffs based on the quantiles
+    if k == 2:
+        return cont_to_binary(x)
     std_dev = np.std(x)
     cuttoffs = np.linspace(np.min(x), np.max(x), k+1)[1:]
     ords = np.zeros(len(x))
@@ -30,20 +32,71 @@ def get_mae(x_imp, x_true):
     return np.mean(np.abs(x_imp - x_true))
         
 
-def get_smae(x_imp, x_true, x_obs):
+def get_smae(x_imp, x_true, x_obs, Med=None, per_type=False, cont_loc=None, bin_loc=None, ord_loc=None):
     """
     gets Scaled Mean Absolute Error (SMAE) between x_imp and x_true
     """
-    scaled_diffs = np.zeros(x_obs.shape[1])
+    error = np.zeros((x_obs.shape[1],2))
     for i, col in enumerate(x_obs.T):
+        test = np.bitwise_and(~np.isnan(x_true[:,i]), np.isnan(col))
+        if np.sum(test) == 0:
+            error[i,0] = np.nan
+            error[i,1] = np.nan
+            continue
         col_nonan = col[~np.isnan(col)]
+        x_true_col = x_true[test,i]
+        x_imp_col = x_imp[test,i]
+        if Med is not None:
+            median = Med[i]
+        else:
+            median = np.median(col_nonan)
+        diff = np.abs(x_imp_col - x_true_col)
+        med_diff = np.abs(median - x_true_col)
+        error[i,0] = np.sum(diff)
+        error[i,1]= np.sum(med_diff)
+    if per_type:
+        if not cont_loc:
+            cont_loc = [True] * 5 + [False] * 10
+        if not bin_loc:
+            bin_loc = [False] * 5 + [True] * 5 + [False] * 5 
+        if not ord_loc:
+            ord_loc = [False] * 10 + [True] * 5
+        loc = [cont_loc, bin_loc, ord_loc]
+        scaled_diffs = np.zeros(3)
+        for j in range(3):
+            scaled_diffs[j] = np.sum(error[loc[j],0])/np.sum(error[loc[j],1])
+    else:
+        scaled_diffs = error[:,0] / error[:,1]
+    return scaled_diffs
+
+def get_smae_per_type(x_imp, x_true, x_obs, cont_loc=None, bin_loc=None, ord_loc=None):
+    if not cont_loc:
+        cont_loc = [True] * 5 + [False] * 10
+    if not bin_loc:
+        bin_loc = [False] * 5 + [True] * 5 + [False] * 5 
+    if not ord_loc:
+        ord_loc = [False] * 10 + [True] * 5
+    loc = [cont_loc, bin_loc, ord_loc]
+    scaled_diffs = np.zeros(3)
+    for j in range(3):
+        missing = np.isnan(x_obs[:,loc[j]])
+        med = np.median(x_obs[:,loc[j]][~missing])
+        diff = np.abs(x_imp[:,loc[j]][missing] - x_true[:,loc[j]][missing])
+        med_diff = np.abs(med - x_true[:,loc[j]][missing])
+        scaled_diffs[j] = np.sum(diff)/np.sum(med_diff)
+    return scaled_diffs
+    
+def get_smae_per_type_online(x_imp, x_true, x_obs, Med):
+    for i, col in enumerate(x_obs.T):
+        missing = np.isnan(col)
         x_true_col = x_true[np.isnan(col),i]
         x_imp_col = x_imp[np.isnan(col),i]
-        median = np.median(col_nonan)
+        median = Med[i]
         diff = np.abs(x_imp_col - x_true_col)
         med_diff = np.abs(median - x_true_col)
         scaled_diffs[i] = np.sum(diff)/np.sum(med_diff)
     return scaled_diffs
+
 
 def get_rmse(x_imp, x_true):
     """
@@ -61,29 +114,65 @@ def get_scaled_error(sigma_imp, sigma):
     """
     return np.linalg.norm(sigma - sigma_imp) / np.linalg.norm(sigma)
 
-def mask(X, mask_fraction):
+
+def mask_types(X, mask_num, seed):
+    """
+    Masks mask_num entries of the continuous, ordinal, and binary columns of X
+    """
+    X_masked = np.copy(X)
+    mask_indices = []
+    num_rows = X_masked.shape[0]
+    num_cols = X_masked.shape[1]
+    for i in range(num_rows):
+        np.random.seed(seed*num_rows-i) # uncertain if this is necessary
+        rand_idx = np.concatenate((np.random.choice(num_cols // 3, mask_num, False), np.random.choice(num_cols // 3, mask_num, False), np.random.choice(num_cols // 3, mask_num, False)))
+        for idx in rand_idx[:mask_num]:
+            X_masked[i, idx] = np.nan
+            mask_indices.append((i,idx))
+        for idx in rand_idx[mask_num:2*mask_num]:
+            X_masked[i, idx+5] = np.nan
+            mask_indices.append((i,idx+num_cols // 3))
+        for idx in rand_idx[2*mask_num:]:
+            X_masked[i, idx+10] = np.nan
+            mask_indices.append((i,idx+num_cols // 3 * 2))
+    return X_masked, mask_indices
+
+def mask(X, mask_fraction, seed=0):
     """
     Masks mask_fraction entries of X, raising a value error if an entire row is masked
     """
+    complete = False
+    count = 0
     X_masked = np.copy(X) 
     obs_indices = np.argwhere(~np.isnan(X))
     total_observed = len(obs_indices)
-    mask_indices = obs_indices[np.random.choice(len(obs_indices), size=int(mask_fraction*total_observed), replace=False)]
-    for i,j in mask_indices:
-        X_masked[i,j] = np.nan
-        row = X_masked[i,:]
-        if len(row[~np.isnan(row)]) == 0:
-            print(i)
-            raise ValueError("Failure in Generation, row is entirely nan")
-    return X_masked, mask_indices
+    while not complete:
+        np.random.seed(seed)
+        print(seed)
+        mask_indices = obs_indices[np.random.choice(len(obs_indices), size=int(mask_fraction*total_observed), replace=False)]
+        for i,j in mask_indices:
+            X_masked[i,j] = np.nan
+        complete = True
+        for row in X_masked:
+            if len(row[~np.isnan(row)]) == 0:
+                seed += 1
+                count += 1
+                complete = False
+                X_masked = np.copy(X)
+                break
+        if count == 50:
+            raise ValueError("Failure in Masking data without empty rows")
+    return X_masked, mask_indices, seed
 
-def mask_one_per_row(X):
+def mask_per_row(X, seed=0, size=1):
     """
     Maskes one element uniformly at random from each row of X
     """
     X_masked = np.copy(X)
-    for i in range(X_masked.shape[0]):
-        rand_idx = np.random.choice(X.shape[1])
+    n,p = X.shape
+    for i in range(n):
+        np.random.seed(seed*n+i)
+        rand_idx = np.random.choice(p, size)
         X_masked[i,rand_idx] = np.nan
     return X_masked
 
@@ -100,5 +189,13 @@ def _project_to_correlation(covariance):
         D = np.diagonal(covariance)
         D_neg_half = np.diag(1.0/np.sqrt(D))
         return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
+
+def generate_sigma(seed):
+    np.random.seed(seed)
+    W = np.random.normal(size=(15, 15))
+    covariance = np.matmul(W, W.T)
+    D = np.diagonal(covariance)
+    D_neg_half = np.diag(1.0/np.sqrt(D))
+    return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
 
 
