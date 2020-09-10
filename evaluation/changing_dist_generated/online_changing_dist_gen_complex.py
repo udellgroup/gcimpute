@@ -8,7 +8,7 @@ from scipy.stats import random_correlation, norm, expon
 import pandas as pd
 
 def main(START=1, NUM_RUNS=20):
-    NUM_SAMPLES = 4000
+    NUM_SAMPLES = 2000
     BATCH_SIZE = 40
     WINDOW_SIZE = 200
     NUM_ORD_UPDATES = 2
@@ -19,7 +19,7 @@ def main(START=1, NUM_RUNS=20):
     for i in range(START, NUM_RUNS+START):
         print("starting epoch: ", i, "\n")
         sigma_window = []
-        sigma_window_len = 2
+        sigma_window_len = 1
         change_statistics = []
         
         sigma1 = generate_sigma(3*i-2)
@@ -90,18 +90,24 @@ def main(START=1, NUM_RUNS=20):
     smae_online= np.mean(smae_online_trials, 0)
     smae_offline= np.mean(smae_offline_trials, 0)
     smae_means = pd.DataFrame(np.concatenate((smae_online, smae_offline), 1))
-    smae_means.to_csv("smae_means.csv")
+    smae_means.to_csv("sim_smae_means.csv")
     smae_online= np.std(smae_online_trials, 0)
     smae_offline= np.std(smae_offline_trials, 0)
     smae_stds = pd.DataFrame(np.concatenate((smae_online, smae_offline), 1))
-    smae_stds.to_csv("smae_stds.csv")
-    mean_change_statistics = np.mean(change_statistics, 0)
-    pd.DataFrame(mean_change_statistics).to_csv("change_statistics.csv")
+    smae_stds.to_csv("sim_smae_stds.csv")
     
-    return smae_means, smae_stds, np.array(res_change_statistics)
+    #pd.DataFrame(change_statistics[:,2]).to_csv("sim_change_statistics_Frobenius.csv")
+    #pd.DataFrame(change_statistics[:,1]).to_csv("sim_change_statistics_Nuclear.csv")
+    #pd.DataFrame(change_statistics[:,0]).to_csv("sim_change_statistics_Spectral.csv")
+    res_change_statistics = np.array(res_change_statistics)
+    mean_change_statistics = np.mean(res_change_statistics, 0)
+    pd.DataFrame(mean_change_statistics).to_csv("sim_change_statistics.csv")
+    
+    return smae_means, smae_stds, res_change_statistics
 
 
 if __name__ == "__main__":
-    smae_means, smae_stds, change_statistics = main(1,20)
+    smae_means, smae_stds, change_statistics = main(1,10)
     #mean_change_statistics = np.mean(change_statistics, 0)
+    #plt.scatter(range(mean_change_statistics.shape[0]), mean_change_statistics[:,2], s=10,c='blue')
     
