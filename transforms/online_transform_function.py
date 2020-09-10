@@ -26,27 +26,25 @@ class OnlineTransformFunction():
         """
         Update the running window used to estimate marginals with the data in X
         """
+        # Initialization
         if np.isnan(self.window[0, 0] ):
-            # YX comment: improve the initial sampling as described in lines 12-14
-            # the initial sampling should be done column-wisely
+            # Continuous columns: normal initialization
             mean_cont = np.nanmean(X_batch[:, self.cont_indices])
             std_cont = np.nanstd(X_batch[:, self.cont_indices])
             if np.isnan(mean_cont):
                 self.window[:, self.cont_indices] = np.random.normal(0, 1, size=(self.window_size, np.sum(self.cont_indices)))
             else:
                 self.window[:, self.cont_indices] = np.random.normal(mean_cont, std_cont, size=(self.window_size, np.sum(self.cont_indices)))
-            # ord_values = np.unique(X_batch[:, self.ord_indices]) # np.fromfunction(lambda i,j: np.random.choice(ord_values), size=self.window[:, self.ord_indices].shape)
-            #min_ord = min(X_batch[:, self.ord_indices])
-            #max_ord = max(X_batch[:, self.ord_indices]) + 1
-            #self.window[:, self.ord_indices] = np.random.randint(min_ord, max_ord, size=self.window[:, self.ord_indices].shape)
+            # Ordinal columns: uniform initialization
             for j,loc in enumerate(self.ord_indices):
                 if loc:
                     min_ord = np.nanmin(X_batch[:, j])
-                    max_ord = np.nanmax(X_batch[:,j]) + 1
+                    max_ord = np.nanmax(X_batch[:,j]) 
                     if np.isnan(min_ord):
                         self.window[:,j].fill(0)
                     else:
-                        self.window[:, j] = np.random.randint(min_ord, max_ord, size=self.window_size)
+                        self.window[:, j] = np.random.randint(min_ord, max_ord+1, size=self.window_size)
+        # update for new data
         for row in X_batch:
             for col_num in range(len(row)):
                 data = row[col_num]
