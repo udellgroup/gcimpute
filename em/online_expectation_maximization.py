@@ -282,13 +282,23 @@ class OnlineExpectationMaximization(ExpectationMaximization):
 
 
         # compute test statistics
-    def get_matrix_diff(self, sigma_old, sigma_new):
+    def get_matrix_diff(self, sigma_old, sigma_new, type = 'F'):
+        '''
+        Return the correlation change tracking statistics, as some matrix norm of normalized matrix difference.
+        Support three norms currently: 'F' for Frobenius norm, 'S' for spectral norm and 'N' for nuclear norm. User-defined norm can also be used.
+        '''
         p = sigma_old.shape[0]
         u, s, vh = np.linalg.svd(sigma_old)
         factor = (u * np.sqrt(1/s) ) @ vh
         diff = factor @ sigma_new @ factor
-        _, s, _ = np.linalg.svd(diff)
-        return max(abs(s-1)), np.sum(abs(s-1)), np.linalg.norm(diff-np.identity(p))
+        if type == 'F':
+            return np.linalg.norm(diff-np.identity(p))
+        else:
+            _, s, _ = np.linalg.svd(diff)
+            if type == 'S':
+                return max(abs(s-1))
+            if type == 'N':
+                return np.sum(abs(s-1))
 
 
         
