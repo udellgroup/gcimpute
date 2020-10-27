@@ -32,7 +32,7 @@ if __name__ == "__main__":
         X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
         bem = BatchExpectationMaximization()
         start_time = time.time()
-        X X_imp, sigma_imp = bem.impute_missing(X_masked, 
+        X_imp, sigma_imp = bem.impute_missing(X_masked, 
             max_iter=MAX_ITER, batch_size=BATCH_SIZE,  batch_c = batch_c, max_workers=4, verbose=True, num_ord_updates=NUM_ORD_UPDATES)
         end_time = time.time()
         runtimes.append(end_time - start_time)

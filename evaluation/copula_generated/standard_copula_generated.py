@@ -8,8 +8,7 @@ import time
 if __name__ == "__main__":
     scaled_errors = []
     smaes = []
-    rmses = []
-    NUM_STEPS = 10
+    NUM_STEPS = 3
     runtimes = []
     for i in range(1, NUM_STEPS + 1):
         print("starting epoch: " + str(i))
@@ -36,7 +35,6 @@ if __name__ == "__main__":
         # update error to be normalized
         scaled_errors.append(scaled_error)
         smaes.append(smae)
-        rmses.append(rmse)
     print("mean of scaled errors is: ")
     print(np.mean(np.array(scaled_errors)))
     print("std deviation of scaled errors is: ")
@@ -57,11 +55,6 @@ if __name__ == "__main__":
     print(np.mean(std_dev_smaes[5:10]))
     print("std dev ord smaes are: ")
     print(np.mean(std_dev_smaes[10:]))
-    print("\n")
-    print("mean of rmses is: ")
-    print(np.mean(np.array(rmses),axis=0))
-    print("std deviation of rmses is: ")
-    print(np.std(np.array(rmses),axis=0))
     print("\n")
     print("mean time for run is: ")
     print(np.mean(np.array(runtimes)))
