@@ -112,18 +112,14 @@ class ExpectationMaximization():
         n = Z.shape[0]
         p = Z.shape[1]
         res = []
-        ## args = [(np.copy(Z[(n/cores)*i:(n/cores+1)*i,:]), ...) for i in range(cores)]
-        #args = [(np.copy(Z[i,:]), np.copy(r_lower[i,:]), np.copy(r_upper[i,:]), sigma, num_ord) for i in range(n)] ## length of args is number of rows, change it to be number of cores available, determine indicies for every element of the args
         divide = n/max_workers * np.arange(max_workers+1)
         divide = divide.astype(int)
         args = [(np.copy(Z[divide[i]:divide[i+1],:]), r_lower[divide[i]:divide[i+1],:], r_upper[divide[i]:divide[i+1],:], sigma, num_ord_updates) \
                                for i in range(max_workers)]
-        with ProcessPoolExecutor(max_workers=max_workers) as pool: ## in the future, perhaps accelerate by changing args so we can do 4 cores at a time
+        with ProcessPoolExecutor(max_workers=max_workers) as pool: 
             res = pool.map(_em_step_body_, args)
             Z_imp = np.empty((n,p))
             C = np.zeros((p,p))
-            # print('TEST -- TEST -- TEST -- TEST')
-            # print(enumerate(res))
             for i,(C_divide, Z_imp_divide, Z_divide) in enumerate(res):
                 C += C_divide/n
                 Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
@@ -158,7 +154,9 @@ class ExpectationMaximization():
         Returns:
             Z_ord (range): Samples drawn from gaussian truncated between Z_ord_lower and Z_ord_upper
         """
-        Z_ord = np.copy(Z_ord_upper)
+        Z_ord = np.empty(Z_ord_lower.shape)
+        Z_ord[:] = np.nan
+
         n, k = Z_ord.shape
         obs_indices = ~np.isnan(Z_ord_lower)
 
@@ -166,6 +164,7 @@ class ExpectationMaximization():
         u_lower[obs_indices] = norm.cdf(Z_ord_lower[obs_indices])
         u_upper = np.copy(Z_ord_upper)
         u_upper[obs_indices] = norm.cdf(Z_ord_upper[obs_indices])
+
         for i in range(n):
             for j in range(k):
                 if not np.isnan(Z_ord_upper[i,j]) and u_upper[i,j] > 0 and u_lower[i,j]<1:
