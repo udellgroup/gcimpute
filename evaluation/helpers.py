@@ -25,11 +25,18 @@ def cont_to_ord(x, k):
         ords += (x > cuttoff).astype(int)
     return ords.astype(int)
 
-def get_mae(x_imp, x_true):
+
+def get_mae(x_imp, x_true, x_obs=None):
     """
     gets Mean Absolute Error (MAE) between x_imp and x_true
     """
-    return np.mean(np.abs(x_imp - x_true))
+    if x_obs is not None:
+        loc = np.isnan(x_obs)
+        imp = x_imp[loc]
+        val = x_true[loc]
+        return np.mean(np.abs(imp - val))
+    else:
+        return np.mean(np.abs(x_imp - x_true))
         
 
 def get_smae(x_imp, x_true, x_obs, Med=None, per_type=False, cont_loc=None, bin_loc=None, ord_loc=None):
@@ -98,14 +105,22 @@ def get_smae_per_type_online(x_imp, x_true, x_obs, Med):
     return scaled_diffs
 
 
-def get_rmse(x_imp, x_true):
+def get_rmse(x_imp, x_true, relative=False):
     """
-    gets Root Mean Squared Error (RMSE) between x_imp and x_true
+    gets Root Mean Squared Error (RMSE) or Normalized Root Mean Squared Error (NRMSE) between x_imp and x_true
     """
     diff = x_imp - x_true
     mse = np.mean(diff**2.0, axis=0)
     rmse = np.sqrt(mse)
-    return rmse
+    return rmse if not relative else rmse/np.sqrt(np.mean(x_true**2))
+
+def get_relative_rmse(x_imp, x_true, x_obs):
+    loc = np.isnan(x_obs)
+    imp = x_imp[loc]
+    val = x_true[loc]
+    return get_scaled_error(imp, val)
+
+
 
 
 def get_scaled_error(sigma_imp, sigma):
@@ -137,7 +152,7 @@ def mask_types(X, mask_num, seed):
             mask_indices.append((i,idx+num_cols // 3 * 2))
     return X_masked, mask_indices
 
-def mask(X, mask_fraction, seed=0):
+def mask(X, mask_fraction, seed=0, verbose=False):
     """
     Masks mask_fraction entries of X, raising a value error if an entire row is masked
     """
@@ -148,7 +163,7 @@ def mask(X, mask_fraction, seed=0):
     total_observed = len(obs_indices)
     while not complete:
         np.random.seed(seed)
-        print(seed)
+        if (verbose): print(seed)
         mask_indices = obs_indices[np.random.choice(len(obs_indices), size=int(mask_fraction*total_observed), replace=False)]
         for i,j in mask_indices:
             X_masked[i,j] = np.nan
@@ -197,5 +212,59 @@ def generate_sigma(seed):
     D = np.diagonal(covariance)
     D_neg_half = np.diag(1.0/np.sqrt(D))
     return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
+
+def generate_LRGC(rank, sigma, n=500, p_seq=(100,100,100), ord_num=5, cont_type = 'LR', seed=1):
+    cont_indices = None
+    bin_indices = None
+    ord_indices = None
+    if p_seq[0] > 0:
+        cont_indices = range(p_seq[0])
+    if p_seq[1] > 0:
+        ord_indices = range(p_seq[0],p_seq[0] + p_seq[1])
+    if p_seq[2] > 0:
+        bin_indices = range(p_seq[0] + p_seq[1], p_seq[0] + p_seq[1] + p_seq[2])
+    p = np.sum(p_seq)
+    np.random.seed(seed)
+    W = np.random.normal(size=(p,rank))
+    # TODO: check everything of this form with APPLY
+    for i in range(W.shape[0]):
+        W[i,:] = W[i,:]/np.sqrt(np.sum(np.square(W[i,:]))) * np.sqrt(1 - sigma)
+    Z = np.dot(np.random.normal(size=(n,rank)), W.T) + np.random.normal(size=(n,p), scale=np.sqrt(sigma))
+    X_true = Z
+    if cont_indices is not None:
+        if cont_type != 'LR':
+            X_true[:,cont_indices] = X_true[:,cont_indices]**3
+    if bin_indices is not None:
+        for bin_index in bin_indices:
+            X_true[:,bin_index] = continuous2ordinal(Z[:,bin_index], k=2)
+    if ord_indices is not None:
+        for ord_index in ord_indices:
+            X_true[:,ord_index] = continuous2ordinal(Z[:,ord_index], k=ord_num)
+    return X_true, W
+
+
+def continuous2ordinal(x, k = 2, cutoff = None):
+    q = np.quantile(x, (0.05,0.95))
+    if k == 2:
+        if cutoff is None:
+            # random cuttoff from the data between the 5th and 95th percentile
+            cutoff = np.random.choice(x[(x > q[0])*(x < q[1])])
+        x = (x >= cutoff).astype(int)
+    else:
+        if cutoff is None:
+            std_dev = np.std(x)
+            min_cutoff = np.min(x) - 0.1 * std_dev
+            cutoff = np.sort(np.random.choice(x[(x > q[0])*(x < q[1])], k-1, False))
+            max_cutoff = np.max(x) + 0.1 * std_dev
+            cuttoff = np.hstack((min_cutoff, cutoff, max_cutoff))
+        x = np.digitize(x, cuttoff)
+    return x
+
+def grassman_dist(A,B):
+    U1, d1, _ = np.linalg.svd(A, full_matrices = False)
+    U2, d2, _ = np.linalg.svd(B, full_matrices = False)
+    _, d,_ = np.linalg.svd(np.dot(U1.T, U2))
+    theta = np.arccos(d)
+    return np.linalg.norm(theta), np.linalg.norm(d1-d2)
 
 
