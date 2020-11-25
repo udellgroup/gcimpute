@@ -22,7 +22,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         self.iteration = 1
 
 
-    def partial_fit_and_predict(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5, sigma_update=True, marginal_update = True, sigma_out=False):
+    def partial_fit_and_predict(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, sigma_update=True, marginal_update = True, sigma_out=False):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -66,7 +66,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         else:
             return X_imp
 
-    def _fit_covariance(self, X_batch, max_workers=1, num_ord_updates=2, decay_coef=0.5, update=True, sigma_out=False):
+    def _fit_covariance(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, update=True, sigma_out=False):
         """
         Updates the covariance matrix of the gaussian copula using the data 
         in X_batch and returns the imputed latent values corresponding to 

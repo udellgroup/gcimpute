@@ -7,7 +7,7 @@ from em.embody import _em_step_body_, _em_step_body, _em_step_body_row
 
 
 class BatchExpectationMaximization(ExpectationMaximization):
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=1, max_ord=100, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=4, max_ord=100, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False):
         """
         Fits a Gaussian Copula and imputes missing values in X.
         Args:
@@ -45,7 +45,7 @@ class BatchExpectationMaximization(ExpectationMaximization):
         X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
         return X_imp, sigma_rearranged
 
-    def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers=1, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False):
+    def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers=4, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False):
         """
         Fits the covariance matrix of the gaussian copula using the data 
         in X and returns the imputed latent values corresponding to 

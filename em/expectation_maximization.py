@@ -8,14 +8,14 @@ class ExpectationMaximization():
     def __init__(self):
         return
 
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=1, max_ord=20, num_ord_updates=1, verbose=False):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=50, max_workers=4, max_ord=20, num_ord_updates=1, verbose=False, seed=1):
         """
         Fits a Gaussian Copula and imputes missing values in X.
 
         Args:
             X (matrix): data matrix with entries to be imputed
-            cont_indices (array): indices of the continuous entries
-            ord_indices (array): indices of the ordinal entries
+            cont_indices (array): logical, true at indices of the continuous entries
+            ord_indices (array): logical, true at indices of the ordinal entries
             threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
             max_iter (int): the maximum number of iterations for copula estimation
             max_workers: the maximum number of workers for parallelism
@@ -29,7 +29,7 @@ class ExpectationMaximization():
             cont_indices = self.get_cont_indices(X, max_ord)
             ord_indices = ~cont_indices
         self.transform_function = TransformFunction(X, cont_indices, ord_indices) ## estimate transformation function
-        sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers, verbose)
+        sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers, num_ord_updates, verbose, seed)
         # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
         sigma_rearranged = np.empty(sigma.shape)
         sigma_rearranged[np.ix_(ord_indices,ord_indices)] = sigma[:np.sum(ord_indices),:np.sum(ord_indices)]
@@ -43,11 +43,9 @@ class ExpectationMaximization():
         X_imp = np.empty(X.shape)
         X_imp[:,cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
         X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
-
-        ## X_imp[:,cont_indices][np.isnan()] want to not use extra storage, do imputation on cont and ord directly in X_imp
         return X_imp, sigma_rearranged
 
-    def _fit_covariance(self, X, cont_indices, ord_indices, threshold=0.01, max_iter=100, max_workers=1, num_ord_updates=1, verbose=False):
+    def _fit_covariance(self, X, cont_indices, ord_indices, threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, verbose=False, seed=1):
         """
         Fits the covariance matrix of the gaussian copula using the data 
         in X and returns the imputed latent values corresponding to 
@@ -67,7 +65,7 @@ class ExpectationMaximization():
         """
         assert cont_indices is not None or ord_indices is not None
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, seed)
         Z_cont = self.transform_function.get_cont_latent()
 
         Z_imp = np.concatenate((Z_ord,Z_cont), axis=1)
@@ -83,9 +81,11 @@ class ExpectationMaximization():
             sigma, Z_imp, Z = self._em_step(Z, Z_ord_lower, Z_ord_upper, sigma, max_workers, num_ord_updates)
             sigma = self._project_to_correlation(sigma)
             # stop early if the change in the correlation estimation is below the threshold
-            if self._get_scaled_diff(prev_sigma, sigma) < threshold:
+            sigmaudpate = self._get_scaled_diff(prev_sigma, sigma)
+            if sigmaudpate < threshold:
                 if verbose: print('Convergence at iteration '+str(i+1))
                 break
+            if verbose: print("Copula correlation change ratio: ", np.round(sigmaudpate, 4))
             prev_sigma = sigma
         if verbose and i == max_iter-1: 
             print("Convergence not achieved at maximum iterations")
@@ -142,7 +142,7 @@ class ExpectationMaximization():
         covariance *= D_neg_half
         return covariance.T * D_neg_half
 
-    def _init_Z_ord(self, Z_ord_lower, Z_ord_upper):
+    def _init_Z_ord(self, Z_ord_lower, Z_ord_upper, seed):
         """
         Initializes the observed latent ordinal values by sampling from a standard
         Gaussian trucated to the inveral of Z_ord_lower, Z_ord_upper
@@ -165,6 +165,7 @@ class ExpectationMaximization():
         u_upper = np.copy(Z_ord_upper)
         u_upper[obs_indices] = norm.cdf(Z_ord_upper[obs_indices])
 
+        np.random.seed(seed)
         for i in range(n):
             for j in range(k):
                 if not np.isnan(Z_ord_upper[i,j]) and u_upper[i,j] > 0 and u_lower[i,j]<1:
