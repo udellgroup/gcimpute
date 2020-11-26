@@ -21,7 +21,7 @@ Implements an approximate online expectation maximization algorithm for fitting 
 
 
 ## References
-[1] Zhao, Y. and Udell, M. Missing value imputation for mixeddata through gaussian copula, KDD 2020.
+[1] Zhao, Y. and Udell, M. Missing value imputation for mixed data via Gaussian copula, KDD 2020.
 
 [2] Zhao, Y. and Udell, M. Matrix completion with quantified uncertainty through low rank Gaussian copula, NeurIPS 2020.
 
