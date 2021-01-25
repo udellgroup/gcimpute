@@ -1,6 +1,7 @@
 from transforms.online_transform_function import OnlineTransformFunction
 from scipy.stats import norm, truncnorm
 import numpy as np
+import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 from em.expectation_maximization import ExpectationMaximization
 from em.embody import _em_step_body_, _em_step_body, _em_step_body_row
@@ -22,7 +23,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         self.iteration = 1
 
 
-    def partial_fit_and_predict(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, sigma_update=True, marginal_update = True, sigma_out=False):
+    def partial_fit_and_predict(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, sigma_update=True, marginal_update = True, sigma_out=False, seed = 1):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -44,7 +45,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         # update marginals with the new batch
         #self.transform_function.partial_fit(X_batch)
         # print("X_batch", X_batch)
-        res = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef, sigma_update, sigma_out)
+        res = self._fit_covariance(X_batch, max_workers, num_ord_updates, decay_coef, sigma_update, sigma_out, seed)
         if sigma_out:
             Z_batch_imp, sigma = res
         else:
@@ -66,7 +67,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         else:
             return X_imp
 
-    def _fit_covariance(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, update=True, sigma_out=False):
+    def _fit_covariance(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, update=True, sigma_out=False, seed = 1):
         """
         Updates the covariance matrix of the gaussian copula using the data 
         in X_batch and returns the imputed latent values corresponding to 
@@ -84,7 +85,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         Z_ord_lower, Z_ord_upper = self.transform_function.partial_evaluate_ord_latent(X_batch) 
         #print("ordinal lower size: "+str(Z_ord_lower.shape))
         #print("all missing: "+str(np.all(np.isnan(Z_ord_lower))))
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, seed)
         Z_cont = self.transform_function.partial_evaluate_cont_latent(X_batch) 
         # Latent variable matrix with columns sorted as ordinal, continuous
         Z = np.concatenate((Z_ord, Z_cont), axis=1)
@@ -128,6 +129,9 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             return Z_imp
 
     def get_sigma(self, sigma=None):
+        """
+        Return the copula correlation matrix corresponding to the original variable order. 
+        """
         if sigma is None:
             sigma = self.sigma
         sigma_rearranged = np.empty(sigma.shape)
@@ -138,6 +142,11 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         return sigma_rearranged
 
     def _init_sigma(self, sigma):
+        """
+        Re-arrange the rows and columns of the provided initial copula correlation matrix to the order of
+        ordinal rows/cols first and continuous rows/cols last. 
+        The re-arranged copula correlation matrix is then stored as object attribute.
+        """
         sigma_new = np.empty(sigma.shape)
         sigma_new[:np.sum(self.ord_indices),:np.sum(self.ord_indices)] = sigma[np.ix_(self.ord_indices,self.ord_indices)]
         sigma_new[np.sum(self.ord_indices):,np.sum(self.ord_indices):] = sigma[np.ix_(self.cont_indices,self.cont_indices)]
@@ -145,53 +154,88 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         sigma_new[:np.sum(self.ord_indices),np.sum(self.ord_indices):] = sigma[np.ix_(self.ord_indices,self.cont_indices)] 
         self.sigma = sigma_new
 
-    def change_point_test(self, x_batch, decay_coef, nsample=100, max_workers=4):
-        n,p = x_batch.shape
+    def change_point_test(self, X_batch, decay_coef, type = ['F', 'S', 'N'], nsample=200, max_workers=4, verbose = False):
+        """
+        Updates the fit of the copula using the data in X_batch and returns the 
+        imputed values and the new correlation for the copula
+
+        Args:
+            X_batch (matrix): data matrix with entries to use to update copula and be imputed
+            max_workers (positive int): the maximum number of workers for parallelism 
+            num_ord_updates (positive int): the number of times to re-estimate the latent ordinals per batch
+            decay_coef (float in (0,1)): tunes how much to weight new covariance estimates
+            type (a subset of {'F', 'S', 'N'}): the type of matrix norm to use for constructing test statistics. 
+            max_workers (positive int): the maximum number of workers for parallelism
+            verbose: print the repetition information if True
+        Returns:
+            pval: the empirical p-value of the change point test computed on the new batch of data points
+            s: the test statistics computed on the new batch of data points
+        """
+        n,p = X_batch.shape
+        loc = np.isnan(X_batch)
         #xsample = np.random.multivariate_normal(np.zeros(p), self.sigma, (nsample,n))
-        statistics = np.zeros((nsample,3))
+        #statistics = np.zeros((nsample,l))
+        statistics = {t:[] for t in type}
         sigma_old = self.get_sigma()
-        _, sigma_new = self.partial_fit_and_predict(x_batch, decay_coef=decay_coef, max_workers=max_workers, marginal_update=True, sigma_update=False, sigma_out=True)
-        s = self.get_matrix_diff(sigma_old, sigma_new)
+        _, sigma_new = self.partial_fit_and_predict(X_batch, decay_coef=decay_coef, max_workers=max_workers, marginal_update=True, sigma_update=False, sigma_out=True)
+        s = self.get_matrix_diff(sigma_old, sigma_new, type)
         # generate incomplete mixed data samples
         for i in range(nsample):
             np.random.seed(i)
             z = np.random.multivariate_normal(np.zeros(p), sigma_old, n)
             # mask
-            x = np.empty(x_batch.shape)
+            x = np.empty((n,p))
             x[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(z)
             x[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(z)
-            loc = np.isnan(x_batch)
             x[loc] = np.nan
             #xsample[i,:,:] = x
             _, sigma = self.partial_fit_and_predict(x, decay_coef=decay_coef, max_workers=max_workers, marginal_update=False, sigma_update=False, sigma_out=True)
-            statistics[i,:] = self.get_matrix_diff(sigma_old, sigma)
-            #print("Sigma change after pseudo examples: "+str(self.get_matrix_diff(self.sigma, sigma_old)))
+            #statistics[i,:] = self.get_matrix_diff(sigma_old, sigma, type)
+            si = self.get_matrix_diff(sigma_old, sigma, type)
+            for t in type:
+                statistics[t].append(si[t])
+            if verbose:
+                print("Sigma change in Iteratoin " + str(i) + ": ")
+                print(si)
+        statistics = pd.DataFrame(statistics)
         # compute test statistics
-        pval = np.zeros(3)
-        for j in range(3):
-            pval[j] = np.sum(s[j]<statistics[:,j])/(nsample+1)
+        pval = {}
+        for t in type:
+            pval[t] = np.sum(s[t]<statistics[t])/(nsample+1)
+        #for j in range(l): pval[j] = np.sum(s[j]<statistics[:,j])/(nsample+1)
         self._init_sigma(sigma_new)
         return pval, s
 
 
         # compute test statistics
-    def get_matrix_diff(self, sigma_old, sigma_new, type = 'F'):
+    def get_matrix_diff(self, sigma_old, sigma_new, type = {'F', 'S', 'N'}):
         '''
         Return the correlation change tracking statistics, as some matrix norm of normalized matrix difference.
-        Support three norms currently: 'F' for Frobenius norm, 'S' for spectral norm and 'N' for nuclear norm. User-defined norm can also be used.
+        Support three norms currently: 'F' for Frobenius norm, 'S' for spectral norm and 'N' for nuclear norm. 
+        User-defined norm can also be used through simple modification.
+        Args:
+            simga_old: the estimate of copula correlation matrix based on historical data
+            sigma_new: the estiamte of copula correlation matrix based on new batch data
+            type (a subset of {'F', 'S', 'N'}): the type of matrix norm to use for constructing test statistics. 
+        Returns:
+            test_stats: a dictionary with (matrix norm type, the test statistics) as (key, value) pair.
         '''
         p = sigma_old.shape[0]
         u, s, vh = np.linalg.svd(sigma_old)
         factor = (u * np.sqrt(1/s) ) @ vh
         diff = factor @ sigma_new @ factor
-        if type == 'F':
-            return np.linalg.norm(diff-np.identity(p))
-        else:
+        test_stats = {}
+        if 'F' in type:
+            test_stats['F'] = np.linalg.norm(diff-np.identity(p))
+        if 'S' in type or 'N' in type:
             _, s, _ = np.linalg.svd(diff)
-            if type == 'S':
-                return max(abs(s-1))
-            if type == 'N':
-                return np.sum(abs(s-1))
+        if 'S' in type:
+            test_stats['S'] = max(abs(s-1))
+        if 'N' in type:
+            test_stats['N'] = np.sum(abs(s-1))
+        return test_stats
+
+
 
 
         
