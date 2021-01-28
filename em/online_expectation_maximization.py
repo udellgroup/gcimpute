@@ -128,6 +128,14 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         else:
             return Z_imp
 
+
+    def marginal_update(self, X_batch):
+        '''
+        Useful as empirical distribution information for each variable
+
+        '''
+        self.transform_function.partial_fit(X_batch)
+
     def get_sigma(self, sigma=None):
         """
         Return the copula correlation matrix corresponding to the original variable order. 
@@ -154,7 +162,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         sigma_new[:np.sum(self.ord_indices),np.sum(self.ord_indices):] = sigma[np.ix_(self.ord_indices,self.cont_indices)] 
         self.sigma = sigma_new
 
-    def change_point_test(self, X_batch, decay_coef, type = ['F', 'S', 'N'], nsample=200, max_workers=4, verbose = False):
+    def change_point_test(self, X_batch, decay_coef, type = ['F', 'S', 'N'], nsample=200, max_workers=4, verbose = False, sigma_update = True):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -177,8 +185,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         #statistics = np.zeros((nsample,l))
         statistics = {t:[] for t in type}
         sigma_old = self.get_sigma()
-        _, sigma_new = self.partial_fit_and_predict(X_batch, decay_coef=decay_coef, max_workers=max_workers, marginal_update=True, sigma_update=False, sigma_out=True)
-        s = self.get_matrix_diff(sigma_old, sigma_new, type)
+
         # generate incomplete mixed data samples
         for i in range(nsample):
             np.random.seed(i)
@@ -188,7 +195,11 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             x[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(z)
             x[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(z)
             x[loc] = np.nan
-            #xsample[i,:,:] = x
+            # TO DO:
+            # It may be more desirable to allow marginal update for each pseudo-sample to add sample variability 
+            # Under current implementation, the conjecture is that the difference between sigma_old and sigma is underestimated,
+            # since the variability in different marginals is ignored.
+            # That will also make the pvalues underestimated, i.e. smaller than the expected values
             _, sigma = self.partial_fit_and_predict(x, decay_coef=decay_coef, max_workers=max_workers, marginal_update=False, sigma_update=False, sigma_out=True)
             #statistics[i,:] = self.get_matrix_diff(sigma_old, sigma, type)
             si = self.get_matrix_diff(sigma_old, sigma, type)
@@ -197,14 +208,19 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             if verbose:
                 print("Sigma change in Iteratoin " + str(i) + ": ")
                 print(si)
+
+        X_imp, sigma_new = self.partial_fit_and_predict(X_batch, decay_coef=decay_coef, max_workers=max_workers, sigma_update = sigma_update, sigma_out=True)
+        s = self.get_matrix_diff(sigma_old, sigma_new, type)
+        
         statistics = pd.DataFrame(statistics)
-        # compute test statistics
         pval = {}
+        # under the null, nsample+1 values are i.i.d., calculate the probability s is no larger than 
+        # the current order among the nsample+1 points.
+        # If the calculated probability (i.e. the empirical p values) is smaller than .05, reject the null hypothesis
+        # Such test follows the convention of resampling test. 
         for t in type:
-            pval[t] = np.sum(s[t]<statistics[t])/(nsample+1)
-        #for j in range(l): pval[j] = np.sum(s[j]<statistics[:,j])/(nsample+1)
-        self._init_sigma(sigma_new)
-        return pval, s
+            pval[t] = (np.sum(s[t]<statistics[t])+1)/(nsample+1)
+        return X_imp, pval, s
 
 
         # compute test statistics
