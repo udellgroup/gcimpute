@@ -11,7 +11,7 @@ def cont_to_binary(x):
             break
     return (x > cutoff).astype(int)
 
-def cont_to_ord(x, k):
+def Cont_to_ord(x, k):
     """
     convert entries of x to an ordinal with k levels using evenenly space thresholds
     """
@@ -24,6 +24,45 @@ def cont_to_ord(x, k):
     for cuttoff in cuttoffs:
         ords += (x > cuttoff).astype(int)
     return ords.astype(int)
+
+
+def _cont_to_ord(x, k, by = 'dist', seed=1):
+    """
+    convert entries of x to an ordinal with k levels using evenenly space thresholds
+    """
+    # make the cutoffs based on the quantiles
+    np.random.seed(seed)
+    std_dev = np.std(x)
+    if by == 'dist':
+        cuttoffs = np.linspace(np.min(x), np.max(x), k+1)[1:]
+    elif by == 'quantile':
+        # samping cutoffs from 5% quantile to 95% quantile 
+        select = x>np.quantile(x, 0.05) & x<np.quantile(0.95)
+        cutoffs = np.random.choice(x[select], k-1, replace = False)
+    elif by == 'sampling':
+        # sampling from standard normal, does not depend on the input data
+        cutoffs = np.random.normal(k-1)
+    ords = np.zeros(len(x))
+    for cuttoff in cuttoffs:
+        ords += (x > cuttoff).astype(int)
+    return ords.astype(int)
+ 
+
+
+def cont_to_ord(x, k, by = 'dist', seed=1):
+    """
+    convert entries of x to an ordinal with k levels using evenenly space thresholds
+    """
+    # make the cutoffs based on the quantiles
+    result = _cont_to_ord(x,k,by,seed)
+    c = 0
+    while len(np.unique(result))<k:
+        c += 1
+        result = _cont_to_ord(x,k,by,seed+c)
+        if c==20:
+            raise ValueError("Failure in generating cutoffs")
+    return result
+
 
 
 def get_mae(x_imp, x_true, x_obs=None):
