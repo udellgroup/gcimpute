@@ -23,6 +23,28 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         self.iteration = 1
 
 
+        # TO DO: allow multiple pass?
+    def fit_one_pass(self, X, BATCH_SIZE=1, decay_coef=0.5, batch_c=5, constant_decay_coef = True, max_workers=1):
+        if not constant_decay_coef:
+            decay_coef
+        n,p = X.shape
+        Ximp = np.empty(X.shape)
+        j=0
+        while True:
+            start = j*BATCH_SIZE
+            end = min((j+1)*BATCH_SIZE, n)
+            if start >= n:
+                break 
+            indices = np.arange(start, end, 1)
+            if not constant_decay_coef:
+                decay_coef = batch_c/(j+batch_c)
+            Ximp[indices,:] = self.partial_fit_and_predict(X[indices,:], max_workers=max_workers, decay_coef=decay_coef)
+            j += 1
+        return Ximp
+
+
+    # TO DO: add a function attribute which takes estimated model and new point as input to return immediate imputaiton
+    #  that would serve as out-of-sample prediction without updating the model parameter. Computation will be smaller but the complexity is still O(p^3)
     def partial_fit_and_predict(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, sigma_update=True, marginal_update = True, sigma_out=False, seed = 1):
         """
         Updates the fit of the copula using the data in X_batch and returns the 

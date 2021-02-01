@@ -1,34 +1,11 @@
-import numpy as np
-
-def cont_to_binary(x):
-    """
-    convert entries of x to binary using a random threshold function
-    """
-    # make the cuttoff a random sample and ensure at least 10% are in each class
-    while True:
-        cutoff = np.random.choice(x)    
-        if len(x[x < cutoff]) > 0.1*len(x) and len(x[x < cutoff]) < 0.9*len(x):
-            break
-    return (x > cutoff).astype(int)
-
-def Cont_to_ord(x, k):
-    """
-    convert entries of x to an ordinal with k levels using evenenly space thresholds
-    """
-    # make the cutoffs based on the quantiles
-    if k == 2:
-        return cont_to_binary(x)
-    std_dev = np.std(x)
-    cuttoffs = np.linspace(np.min(x), np.max(x), k+1)[1:]
-    ords = np.zeros(len(x))
-    for cuttoff in cuttoffs:
-        ords += (x > cuttoff).astype(int)
-    return ords.astype(int)
-
+import numpy as np 
 
 def _cont_to_ord(x, k, by = 'dist', seed=1):
     """
-    convert entries of x to an ordinal with k levels using evenenly space thresholds
+    convert entries of x to an ordinal with k levels using thresholds selected by one choice of the following:
+    by = 'dist': select evenly spaced thresholds
+    by = 'quantile': select random observations between .05 quantile and .95 quantile as thresholds
+    by = 'sampling': select random samples from standard normal distribution as thresholds
     """
     # make the cutoffs based on the quantiles
     np.random.seed(seed)
@@ -42,18 +19,23 @@ def _cont_to_ord(x, k, by = 'dist', seed=1):
     elif by == 'sampling':
         # sampling from standard normal, does not depend on the input data
         cutoffs = np.random.normal(k-1)
+    # TODO:
+    # cuttoff = np.hstack((min_cutoff, cutoff, max_cutoff))
+    # x = np.digitize(x, cuttoff)
     ords = np.zeros(len(x))
     for cuttoff in cuttoffs:
         ords += (x > cuttoff).astype(int)
-    return ords.astype(int)
- 
+    
+    return ords.astype(int) 
 
 
 def cont_to_ord(x, k, by = 'dist', seed=1):
     """
-    convert entries of x to an ordinal with k levels using evenenly space thresholds
+    convert entries of x to an ordinal with k levels using thresholds selected by one choice of the following:
+    by = 'dist': select evenly spaced thresholds
+    by = 'quantile': select random observations between .05 quantile and .95 quantile as thresholds
+    by = 'sampling': select random samples from standard normal distribution as thresholds
     """
-    # make the cutoffs based on the quantiles
     result = _cont_to_ord(x,k,by,seed)
     c = 0
     while len(np.unique(result))<k:
@@ -63,19 +45,68 @@ def cont_to_ord(x, k, by = 'dist', seed=1):
             raise ValueError("Failure in generating cutoffs")
     return result
 
+def generate_sigma(seed):
+    np.random.seed(seed)
+    W = np.random.normal(size=(15, 15))
+    covariance = np.matmul(W, W.T)
+    D = np.diagonal(covariance)
+    D_neg_half = np.diag(1.0/np.sqrt(D))
+    return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
 
-
+def generate_LRGC(rank, sigma, n=500, p_seq=(100,100,100), ord_num=5, cont_type = 'LR', seed=1):
+    cont_indices = None
+    bin_indices = None
+    ord_indices = None
+    if p_seq[0] > 0:
+        cont_indices = range(p_seq[0])
+    if p_seq[1] > 0:
+        ord_indices = range(p_seq[0],p_seq[0] + p_seq[1])
+    if p_seq[2] > 0:
+        bin_indices = range(p_seq[0] + p_seq[1], p_seq[0] + p_seq[1] + p_seq[2])
+    p = np.sum(p_seq)
+    np.random.seed(seed)
+    W = np.random.normal(size=(p,rank))
+    # TODO: check everything of this form with APPLY
+    for i in range(W.shape[0]):
+        W[i,:] = W[i,:]/np.sqrt(np.sum(np.square(W[i,:]))) * np.sqrt(1 - sigma)
+    Z = np.dot(np.random.normal(size=(n,rank)), W.T) + np.random.normal(size=(n,p), scale=np.sqrt(sigma))
+    X_true = Z
+    if cont_indices is not None:
+        if cont_type != 'LR':
+            X_true[:,cont_indices] = X_true[:,cont_indices]**3
+    if bin_indices is not None:
+        for bin_index in bin_indices:
+            X_true[:,bin_index] = continuous2ordinal(Z[:,bin_index], k=2)
+    if ord_indices is not None:
+        for ord_index in ord_indices:
+            X_true[:,ord_index] = continuous2ordinal(Z[:,ord_index], k=ord_num)
+    return X_true, W
+    
 def get_mae(x_imp, x_true, x_obs=None):
     """
     gets Mean Absolute Error (MAE) between x_imp and x_true
     """
     if x_obs is not None:
-        loc = np.isnan(x_obs)
-        imp = x_imp[loc]
-        val = x_true[loc]
-        return np.mean(np.abs(imp - val))
+        loc = np.isnan(x_obs) & (~np.isnan(x_true))
     else:
-        return np.mean(np.abs(x_imp - x_true))
+        loc = ~np.isnan(x_true)
+    diff = x_imp[loc] - x_true[loc]
+    return np.mean(np.abs(diff))
+
+
+def get_rmse(x_imp, x_true, x_obs = None, relative=False):
+    """
+    gets Root Mean Squared Error (RMSE) or Normalized Root Mean Squared Error (NRMSE) between x_imp and x_true
+    """
+    if x_obs is not None:
+        loc = np.isnan(x_obs) & (~np.isnan(x_true))
+    else:
+        loc = ~np.isnan(x_true)
+    diff = x_imp[loc] - x_true[loc]
+    #mse = np.mean(diff**2.0, axis=0)
+    mse = np.mean(np.power(diff, 2))
+    rmse = np.sqrt(mse)
+    return rmse if not relative else rmse/np.sqrt(np.mean(np.power(x_true[loc],2)))
         
 
 def get_smae(x_imp, x_true, x_obs, Med=None, per_type=False, cont_loc=None, bin_loc=None, ord_loc=None):
@@ -144,24 +175,6 @@ def get_smae_per_type_online(x_imp, x_true, x_obs, Med):
     return scaled_diffs
 
 
-def get_rmse(x_imp, x_true, relative=False):
-    """
-    gets Root Mean Squared Error (RMSE) or Normalized Root Mean Squared Error (NRMSE) between x_imp and x_true
-    """
-    diff = x_imp - x_true
-    mse = np.mean(diff**2.0, axis=0)
-    rmse = np.sqrt(mse)
-    return rmse if not relative else rmse/np.sqrt(np.mean(x_true**2))
-
-def get_relative_rmse(x_imp, x_true, x_obs):
-    loc = np.isnan(x_obs)
-    imp = x_imp[loc]
-    val = x_true[loc]
-    return get_scaled_error(imp, val)
-
-
-
-
 def get_scaled_error(sigma_imp, sigma):
     """
     gets a scaled error between matrices |simga - sigma_imp|_F^2 / |sigma|_F^2
@@ -218,15 +231,20 @@ def mask(X, mask_fraction, seed=0, verbose=False):
             raise ValueError("Failure in Masking data without empty rows")
     return X_masked, mask_indices, seed
 
-def mask_per_row(X, seed=0, size=1):
+def mask_per_row(X, seed=0, size=None, ratio=None):
     """
     Maskes one element uniformly at random from each row of X
     """
+    if ratio is not None:
+        size = int(X.shape[1] * ratio)
     X_masked = np.copy(X)
     n,p = X.shape
     for i in range(n):
         np.random.seed(seed*n+i)
-        rand_idx = np.random.choice(p, size)
+        locs = np.arange(p)[~np.isnan(X[i,:])]
+        if len(locs) <= size:
+            raise ValueError("Size too large, empty row will appear!")
+        rand_idx = np.random.choice(locs, size)
         X_masked[i,rand_idx] = np.nan
     return X_masked
 
@@ -243,61 +261,6 @@ def _project_to_correlation(covariance):
         D = np.diagonal(covariance)
         D_neg_half = np.diag(1.0/np.sqrt(D))
         return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
-
-def generate_sigma(seed):
-    np.random.seed(seed)
-    W = np.random.normal(size=(15, 15))
-    covariance = np.matmul(W, W.T)
-    D = np.diagonal(covariance)
-    D_neg_half = np.diag(1.0/np.sqrt(D))
-    return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
-
-def generate_LRGC(rank, sigma, n=500, p_seq=(100,100,100), ord_num=5, cont_type = 'LR', seed=1):
-    cont_indices = None
-    bin_indices = None
-    ord_indices = None
-    if p_seq[0] > 0:
-        cont_indices = range(p_seq[0])
-    if p_seq[1] > 0:
-        ord_indices = range(p_seq[0],p_seq[0] + p_seq[1])
-    if p_seq[2] > 0:
-        bin_indices = range(p_seq[0] + p_seq[1], p_seq[0] + p_seq[1] + p_seq[2])
-    p = np.sum(p_seq)
-    np.random.seed(seed)
-    W = np.random.normal(size=(p,rank))
-    # TODO: check everything of this form with APPLY
-    for i in range(W.shape[0]):
-        W[i,:] = W[i,:]/np.sqrt(np.sum(np.square(W[i,:]))) * np.sqrt(1 - sigma)
-    Z = np.dot(np.random.normal(size=(n,rank)), W.T) + np.random.normal(size=(n,p), scale=np.sqrt(sigma))
-    X_true = Z
-    if cont_indices is not None:
-        if cont_type != 'LR':
-            X_true[:,cont_indices] = X_true[:,cont_indices]**3
-    if bin_indices is not None:
-        for bin_index in bin_indices:
-            X_true[:,bin_index] = continuous2ordinal(Z[:,bin_index], k=2)
-    if ord_indices is not None:
-        for ord_index in ord_indices:
-            X_true[:,ord_index] = continuous2ordinal(Z[:,ord_index], k=ord_num)
-    return X_true, W
-
-
-def continuous2ordinal(x, k = 2, cutoff = None):
-    q = np.quantile(x, (0.05,0.95))
-    if k == 2:
-        if cutoff is None:
-            # random cuttoff from the data between the 5th and 95th percentile
-            cutoff = np.random.choice(x[(x > q[0])*(x < q[1])])
-        x = (x >= cutoff).astype(int)
-    else:
-        if cutoff is None:
-            std_dev = np.std(x)
-            min_cutoff = np.min(x) - 0.1 * std_dev
-            cutoff = np.sort(np.random.choice(x[(x > q[0])*(x < q[1])], k-1, False))
-            max_cutoff = np.max(x) + 0.1 * std_dev
-            cuttoff = np.hstack((min_cutoff, cutoff, max_cutoff))
-        x = np.digitize(x, cuttoff)
-    return x
 
 def grassman_dist(A,B):
     U1, d1, _ = np.linalg.svd(A, full_matrices = False)

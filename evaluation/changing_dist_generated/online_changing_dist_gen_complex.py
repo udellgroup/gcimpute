@@ -7,11 +7,40 @@ import time
 from scipy.stats import random_correlation, norm, expon
 import pandas as pd
 
-def main(START=1, NUM_RUNS=20):
-    NUM_SAMPLES = 2000
-    BATCH_SIZE = 40
-    WINDOW_SIZE = 200
-    NUM_ORD_UPDATES = 2
+def generate_data(seed=1, NUM_SAMPLES = 2000, MASK_NUM = 2, write = False, path = None):
+    i = seed
+    sigma1 = generate_sigma(3*i-2)
+    sigma2 = generate_sigma(3*i-1)
+    sigma3 = generate_sigma(3*i)
+    
+    mean = np.zeros(sigma1.shape[0])   
+    np.random.seed(seed)    
+    X1 = np.random.multivariate_normal(mean, sigma1, size=NUM_SAMPLES)
+    X2 = np.random.multivariate_normal(mean, sigma2, size=NUM_SAMPLES)
+    X3 = np.random.multivariate_normal(mean, sigma3, size=NUM_SAMPLES)
+    
+    X = np.vstack((X1, X2, X3))
+    X[:,:5] = expon.ppf(norm.cdf(X[:,:5]), scale = 3)
+    for j in range(5,15,1):
+            # 6-10 columns are binary, 11-15 columns are ordinal with 5 levels
+        X[:,j] = cont_to_ord(X[:,j], k=2*(j<10)+5*(j>=10), seed = i+j)
+        
+    X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
+
+    if write:
+        pd.DataFrame(X).to_csv(path+'change_true_rep'+str(i)+'.csv', index=False)
+        pd.DataFrame(X_masked).to_csv(path+'change_masked_rep'+str(i)+'.csv', index=False)
+
+    
+    return X_masked, X
+
+def data_writing(path, START=1, NUM_RUNS=20):
+    for i in range(START, NUM_RUNS+START):
+        _, _ = generate_data(seed = i, write = True, path = path)
+    
+
+
+def main(WINDOW_SIZE = 200, batch_c=5, decay_coef = 0.5, START=1, NUM_RUNS=20, NUM_SAMPLES = 2000, BATCH_SIZE=40):
     NUM_BATCH = int(NUM_SAMPLES*3/BATCH_SIZE)
     smae_online_trials = np.zeros((NUM_RUNS, NUM_BATCH, 3))
     smae_offline_trials = np.zeros((NUM_RUNS, NUM_BATCH, 3))
@@ -21,35 +50,18 @@ def main(START=1, NUM_RUNS=20):
         sigma_window = []
         sigma_window_len = 1
         change_statistics = []
-        
-        sigma1 = generate_sigma(3*i-2)
-        sigma2 = generate_sigma(3*i-1)
-        sigma3 = generate_sigma(3*i)
-        mean = np.zeros(sigma1.shape[0])
-        X1 = np.random.multivariate_normal(mean, sigma1, size=NUM_SAMPLES)
-        X2 = np.random.multivariate_normal(mean, sigma2, size=NUM_SAMPLES)
-        X3 = np.random.multivariate_normal(mean, sigma3, size=NUM_SAMPLES)
-        X = np.vstack((X1, X2, X3))
-        X = np.vstack((X1, X2, X3))
-        X[:,:5] = expon.ppf(norm.cdf(X[:,:5]), scale = 3)
-        for j in range(5,15,1):
-            # 6-10 columns are binary, 11-15 columns are ordinal with 5 levels
-            X[:,j] = cont_to_ord(X[:,j], k=2*(j<10)+5*(j>=10))
-        cont_indices = np.array([True] * 5 + [False] * 10)
-        ord_indices = np.array([False] * 5 + [True] * 10)
 
-        # X_masked = mask_one_per_row(X)
-        MASK_NUM = 2
-        X_masked, mask_indices = mask_types(X, MASK_NUM, seed=i)
+        X_masked, X = generate_data(seed = i, NUM_SAMPLES=NUM_SAMPLES, BATCH_SIZE=BATCH_SIZE)
         
         # offline 
         bem = BatchExpectationMaximization() # Switch to batch implementation for acceleration
         start_time = time.time()
-        X_imp_offline, _ = bem.impute_missing(X_masked, max_workers=4, batch_c=5, max_iter=2*NUM_BATCH)
+        X_imp_offline, _ = bem.impute_missing(X_masked, max_workers=4, batch_c=batch_c, max_iter=2*NUM_BATCH)
         end_time = time.time()
-
         
         # online 
+        cont_indices = np.array([True] * 5 + [False] * 10)
+        ord_indices = np.array([False] * 5 + [True] * 10)
         oem = OnlineExpectationMaximization(cont_indices, ord_indices, window_size=WINDOW_SIZE)
         j = 0
         X_imp_online = np.zeros(X_masked.shape)
@@ -61,8 +73,7 @@ def main(START=1, NUM_RUNS=20):
             X_masked_batch = np.copy(X_masked[start:end,:])
             X_imp_online[start:end,:] = oem.partial_fit_and_predict(X_masked_batch, 
                                                              max_workers = 4, 
-                                                             decay_coef=0.5, 
-                                                             num_ord_updates=NUM_ORD_UPDATES)
+                                                             decay_coef=decay_coef)
             if j>=sigma_window_len:
                 sigma_new = oem.get_sigma()
                 dist = np.zeros((sigma_window_len, 3))
