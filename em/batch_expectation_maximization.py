@@ -7,7 +7,7 @@ from em.embody import _em_step_body_, _em_step_body, _em_step_body_row
 
 
 class BatchExpectationMaximization(ExpectationMaximization):
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=4, max_ord=100, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False):
+    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=100, max_workers=4, max_ord=100, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False, seed=1):
         """
         Fits a Gaussian Copula and imputes missing values in X.
         Args:
@@ -29,7 +29,7 @@ class BatchExpectationMaximization(ExpectationMaximization):
             cont_indices = self.get_cont_indices(X, max_ord=max_ord)
             ord_indices = ~cont_indices
         self.transform_function = TransformFunction(X, cont_indices, ord_indices)
-        sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers, batch_size, batch_c, num_ord_updates, verbose)
+        sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers, batch_size, batch_c, num_ord_updates, verbose, seed)
         # rearrange sigma so it corresponds to the column ordering of X
         sigma_rearranged = np.empty(sigma.shape)
         sigma_rearranged[np.ix_(ord_indices,ord_indices)] = sigma[:np.sum(ord_indices),:np.sum(ord_indices)]
@@ -45,7 +45,7 @@ class BatchExpectationMaximization(ExpectationMaximization):
         X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
         return X_imp, sigma_rearranged
 
-    def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers=4, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False):
+    def _fit_covariance(self, X, cont_indices, ord_indices, threshold, max_iter, max_workers=4, batch_size=64, batch_c=1, num_ord_updates=1, verbose=False, seed=1):
         """
         Fits the covariance matrix of the gaussian copula using the data 
         in X and returns the imputed latent values corresponding to 
@@ -65,7 +65,7 @@ class BatchExpectationMaximization(ExpectationMaximization):
         """
         assert cont_indices is not None or ord_indices is not None
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, seed)
         Z_cont = self.transform_function.get_cont_latent()
         Z_imp = np.concatenate((Z_ord,Z_cont), axis=1)
         # mean impute the missing continuous values for the sake of covariance estimation
