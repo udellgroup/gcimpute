@@ -5,6 +5,7 @@ import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 from em.expectation_maximization import ExpectationMaximization
 from em.embody import _em_step_body_, _em_step_body, _em_step_body_row
+from collections import defaultdict
 
 
 class OnlineExpectationMaximization(ExpectationMaximization):
@@ -24,12 +25,16 @@ class OnlineExpectationMaximization(ExpectationMaximization):
 
 
         # TO DO: allow multiple pass?
-    def fit_one_pass(self, X, BATCH_SIZE=1, decay_coef=0.5, batch_c=5, constant_decay_coef = True, max_workers=1):
+    def fit_one_pass(self, X, BATCH_SIZE=1, decay_coef=0.5, batch_c=5, constant_decay_coef = True, max_workers=1, sigma_diff_output = False):
         if not constant_decay_coef:
             decay_coef
         n,p = X.shape
         Ximp = np.empty(X.shape)
         j=0
+        if sigma_diff_output:
+            type = {'F', 'S', 'N'} # can be a parameter
+            sigma_old = self.get_sigma()
+            sigma_diff = defaultdict(list)
         while True:
             start = j*BATCH_SIZE
             end = min((j+1)*BATCH_SIZE, n)
@@ -39,8 +44,17 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             if not constant_decay_coef:
                 decay_coef = batch_c/(j+batch_c)
             Ximp[indices,:] = self.partial_fit_and_predict(X[indices,:], max_workers=max_workers, decay_coef=decay_coef)
+            if sigma_diff_output:
+                sigma_new = self.get_sigma()
+                d = self.get_matrix_diff(sigma_old, sigma_new, type)
+                for t in type:
+                    sigma_diff[t].append(d[t])
+                sigma_old = sigma_new
             j += 1
-        return Ximp
+        if sigma_diff_output:
+            return Ximp, pd.DataFrame(sigma_diff)
+        else:
+            return Ximp
 
 
     # TO DO: add a function attribute which takes estimated model and new point as input to return immediate imputaiton
