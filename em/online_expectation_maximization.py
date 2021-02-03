@@ -24,8 +24,8 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         self.iteration = 1
 
 
-        # TO DO: allow multiple pass?
-    def fit_one_pass(self, X, BATCH_SIZE=1, decay_coef=0.5, batch_c=5, constant_decay_coef = True, max_workers=1, sigma_diff_output = False):
+        # For online/offline evaluation
+    def fit_one_pass(self, X, BATCH_SIZE=10, decay_coef=0.5, batch_c=5, constant_decay_coef = True, max_workers=1, sigma_diff_output = False):
         if not constant_decay_coef:
             decay_coef
         n,p = X.shape
@@ -55,6 +55,28 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             return Ximp, pd.DataFrame(sigma_diff)
         else:
             return Ximp
+
+    # Only for offline tasks
+    def fit_multiple_pass(self, X, num_pass = 2, BATCH_SIZE=10, batch_c=5, max_workers=1):
+        n,p = X.shape
+        Ximp = np.empty(X.shape)
+        num_batches = int(n/BATCH_SIZE) * num_pass
+        j=0
+        while True:
+            start = (j * BATCH_SIZE) % n
+            end = ((j+1) * BATCH_SIZE) % n
+            if start < end:
+                indices = np.arange(start, end, 1)
+            else:
+                indices = np.concatenate((np.arange(start, n), np.arange(end)))
+            if j >= num_batches:
+                break 
+            
+            decay_coef = batch_c/(j+batch_c)
+            Ximp[indices,:] = self.partial_fit_and_predict(X[indices,:], max_workers=max_workers, decay_coef=decay_coef)
+            j += 1
+        return Ximp
+
 
 
     # TO DO: add a function attribute which takes estimated model and new point as input to return immediate imputaiton
