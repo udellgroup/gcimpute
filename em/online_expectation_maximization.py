@@ -56,6 +56,28 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         else:
             return Ximp
 
+
+    def test_one_pass(self, X, BATCH_SIZE=10, nsample=200, decay_coef=0.5, max_workers=4, type = ['F', 'S', 'N'], verbose = True):
+        n,p = X.shape
+        pvalues = {t:[] for t in type}
+        test_stats = {t:[] for t in type}
+        j=0
+        while True:
+            start = j*BATCH_SIZE
+            end = min((j+1)*BATCH_SIZE, n)
+            if start >= n:
+                break 
+            indices = np.arange(start, end, 1)
+            _, pval_iter, s_iter = self.change_point_test(X[indices,:], decay_coef=decay_coef, nsample=nsample)
+            for t in type:
+                pvalues[t].append(pval_iter[t])
+                test_stats[t].append(s_iter[t])
+            if verbose:
+                print("finish batch: ", j, "\n")
+                print(pval_iter)
+            j += 1
+        return pd.DataFrame(pvalues), pd.DataFrame(test_stats)
+
     # Only for offline tasks
     def fit_multiple_pass(self, X, num_pass = 2, BATCH_SIZE=10, batch_c=5, max_workers=1):
         n,p = X.shape
@@ -220,7 +242,8 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         sigma_new[:np.sum(self.ord_indices),np.sum(self.ord_indices):] = sigma[np.ix_(self.ord_indices,self.cont_indices)] 
         self.sigma = sigma_new
 
-    def change_point_test(self, X_batch, decay_coef, type = ['F', 'S', 'N'], nsample=200, max_workers=4, verbose = False, sigma_update = True):
+
+    def change_point_test(self, X_batch, decay_coef, type = ['F', 'S', 'N'], nsample=200, max_workers=4, sigma_update = True):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -263,9 +286,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             si = self.get_matrix_diff(sigma_old, sigma, type)
             for t in type:
                 statistics[t].append(si[t])
-            if verbose:
-                print("Sigma change in Iteratoin " + str(i) + ": ")
-                print(si)
+            
 
         X_imp, sigma_new = self.partial_fit_and_predict(X_batch, decay_coef=decay_coef, max_workers=max_workers, sigma_update = sigma_update, sigma_out=True)
         s = self.get_matrix_diff(sigma_old, sigma_new, type)
