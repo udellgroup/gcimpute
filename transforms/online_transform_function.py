@@ -28,13 +28,15 @@ class OnlineTransformFunction():
         """
         # Initialization
         if np.isnan(self.window[0, 0] ):
+            # TO DO: avoid empty slice
             # Continuous columns: normal initialization
-            mean_cont = np.nanmean(X_batch[:, self.cont_indices])
-            std_cont = np.nanstd(X_batch[:, self.cont_indices])
-            if np.isnan(mean_cont):
-                self.window[:, self.cont_indices] = np.random.normal(0, 1, size=(self.window_size, np.sum(self.cont_indices)))
-            else:
-                self.window[:, self.cont_indices] = np.random.normal(mean_cont, std_cont, size=(self.window_size, np.sum(self.cont_indices)))
+            if np.sum(self.cont_indices)>0:
+                mean_cont = np.nanmean(X_batch[:, self.cont_indices])
+                std_cont = np.nanstd(X_batch[:, self.cont_indices])
+                if np.isnan(mean_cont):
+                    self.window[:, self.cont_indices] = np.random.normal(0, 1, size=(self.window_size, np.sum(self.cont_indices)))
+                else:
+                    self.window[:, self.cont_indices] = np.random.normal(mean_cont, std_cont, size=(self.window_size, np.sum(self.cont_indices)))
             # Ordinal columns: uniform initialization
             for j,loc in enumerate(self.ord_indices):
                 if loc:
