@@ -90,6 +90,8 @@ class BatchExpectationMaximization(ExpectationMaximization):
             else:
                 indices = training_permutation[batch_lower:batch_upper]
             C_batch = np.zeros((p, p))
+            if max_workers is None:
+                max_workers = min(32, os.cpu_count()+4)
             divide = batch_size/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
             args = [(Z[indices[divide[i]:divide[i+1]],:], Z_ord_lower[indices[divide[i]:divide[i+1]],:], Z_ord_upper[indices[divide[i]:divide[i+1]],:], sigma, num_ord_updates) for i in range(max_workers)]

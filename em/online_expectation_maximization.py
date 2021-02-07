@@ -57,7 +57,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             return Ximp
 
 
-    def test_one_pass(self, X, BATCH_SIZE=10, nsample=200, decay_coef=0.5, max_workers=4, type = ['F', 'S', 'N'], verbose = True):
+    def test_one_pass(self, X, BATCH_SIZE=10, nsample=200, decay_coef=0.5, max_workers=None, type = ['F', 'S', 'N'], verbose = True):
         n,p = X.shape
         pvalues = {t:[] for t in type}
         test_stats = {t:[] for t in type}
@@ -68,7 +68,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
             if start >= n:
                 break 
             indices = np.arange(start, end, 1)
-            _, pval_iter, s_iter = self.change_point_test(X[indices,:], decay_coef=decay_coef, nsample=nsample)
+            _, pval_iter, s_iter = self.change_point_test(X[indices,:], decay_coef=decay_coef, nsample=nsample, max_workers = max_workers)
             for t in type:
                 pvalues[t].append(pval_iter[t])
                 test_stats[t].append(s_iter[t])
@@ -174,6 +174,8 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         prev_sigma = self.sigma
         Z_imp = np.zeros((batch_size, p))
         C = np.zeros((p, p))
+        if max_workers is None:
+            max_workers = min(32, os.cpu_count()+4)
         if max_workers==1:
             C, Z_imp, Z = _em_step_body(Z, Z_ord_lower, Z_ord_upper, prev_sigma, num_ord_updates)
         else:
@@ -243,7 +245,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         self.sigma = sigma_new
 
 
-    def change_point_test(self, X_batch, decay_coef, type = ['F', 'S', 'N'], nsample=200, max_workers=4, sigma_update = True):
+    def change_point_test(self, X_batch, decay_coef, type = ['F', 'S', 'N'], nsample=200, max_workers=None, sigma_update = True):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula

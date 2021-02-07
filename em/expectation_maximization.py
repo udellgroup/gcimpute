@@ -112,6 +112,8 @@ class ExpectationMaximization():
         n = Z.shape[0]
         p = Z.shape[1]
         res = []
+        if max_workers is None:
+            max_workers = min(32, os.cpu_count()+4)
         divide = n/max_workers * np.arange(max_workers+1)
         divide = divide.astype(int)
         args = [(np.copy(Z[divide[i]:divide[i+1],:]), r_lower[divide[i]:divide[i+1],:], r_upper[divide[i]:divide[i+1],:], sigma, num_ord_updates) \
