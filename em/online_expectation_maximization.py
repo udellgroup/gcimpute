@@ -79,7 +79,7 @@ class OnlineExpectationMaximization(ExpectationMaximization):
         return pd.DataFrame(pvalues), pd.DataFrame(test_stats)
 
     # Only for offline tasks
-    def fit_multiple_pass(self, X, num_pass = 2, BATCH_SIZE=10, batch_c=5, max_workers=1):
+    def fit_multiple_pass(self, X, num_pass = 2, BATCH_SIZE=10, batch_c=5, max_workers=1, threshold = 0.01):
         n,p = X.shape
         Ximp = np.empty(X.shape)
         num_batches = int(n/BATCH_SIZE) * num_pass
@@ -95,7 +95,10 @@ class OnlineExpectationMaximization(ExpectationMaximization):
                 break 
             
             decay_coef = batch_c/(j+batch_c)
+            prev_sigma = self.sigma
             Ximp[indices,:] = self.partial_fit_and_predict(X[indices,:], max_workers=max_workers, decay_coef=decay_coef)
+            if j>= int(n/BATCH_SIZE) and self._get_scaled_diff(prev_sigma, self.sigma) < threshold: 
+                break
             j += 1
         return Ximp
 
