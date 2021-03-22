@@ -51,7 +51,7 @@ def main(WINDOW_SIZE = 200, batch_c=5, decay_coef = 0.5, START=1, NUM_RUNS=20, N
         sigma_window_len = 1
         change_statistics = []
 
-        X_masked, X = generate_data(seed = i, NUM_SAMPLES=NUM_SAMPLES, BATCH_SIZE=BATCH_SIZE)
+        X_masked, X = generate_data(seed = i, NUM_SAMPLES=NUM_SAMPLES)
         
         # offline 
         bem = BatchExpectationMaximization() # Switch to batch implementation for acceleration

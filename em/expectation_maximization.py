@@ -3,6 +3,7 @@ from scipy.stats import norm, truncnorm
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 from em.embody import _em_step_body_, _em_step_body, _em_step_body_row
+import warnings
 
 class ExpectationMaximization():
     def __init__(self):
@@ -140,6 +141,7 @@ class ExpectationMaximization():
             correlation (matrix): the covariance matrix projected to a correlation matrix
         """
         D = np.diagonal(covariance)
+        if any(D==0): raise ZeroDivisionError("unexpected zero covariance for  the latent Z") 
         D_neg_half = 1.0/np.sqrt(D)
         covariance *= D_neg_half
         return covariance.T * D_neg_half
@@ -170,6 +172,7 @@ class ExpectationMaximization():
         np.random.seed(seed)
         for i in range(n):
             for j in range(k):
+                assert 0<=u_lower[i,j]<=u_upper[i,j]<=1 
                 if not np.isnan(Z_ord_upper[i,j]) and u_upper[i,j] > 0 and u_lower[i,j]<1:
                     u_sample = np.random.uniform(u_lower[i,j],u_upper[i,j])
                     Z_ord[i,j] = norm.ppf(u_sample)

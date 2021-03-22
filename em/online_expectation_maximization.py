@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 from em.expectation_maximization import ExpectationMaximization
 from em.embody import _em_step_body_, _em_step_body, _em_step_body_row
 from collections import defaultdict
+import os
 
 
 class OnlineExpectationMaximization(ExpectationMaximization):

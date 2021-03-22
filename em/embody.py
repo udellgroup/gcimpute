@@ -10,7 +10,6 @@ def _em_step_body_(args):
 def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates=1):
     """
     Iterate the rows over provided matrix 
-
     """
     num, p = Z.shape
     Z_imp = np.copy(Z)
@@ -20,6 +19,7 @@ def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates=1):
         Z_imp[i,:] = z_imp
         Z[i,:] = z
         C += c
+    # TO DO: no need to return Z, just edit it during the process
     return C, Z_imp, Z
 
 
@@ -39,14 +39,17 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates=1)
     Returns:
         C (matrix): results in the updated covariance when added to the empircal covariance
         Z_imp_row (array): Z_row with latent ordinals updated and missing entries imputed 
-        Z_row (array): inpute Z_row with latent ordinals updated
+        Z_row (array): input Z_row with latent ordinals updated
     """
     Z_imp_row = np.copy(Z_row)
     p = Z_imp_row.shape[0]
     num_ord = r_upper_row.shape[0]
     C = np.zeros((p,p))
-    obs_indices = np.where(~np.isnan(Z_row))[0] ## doing search twice for basically same thing?
-    missing_indices = np.setdiff1d(np.arange(p), obs_indices) ## Use set difference to avoid another searching
+
+    # TO DO: obs_indices = np.argwhere(~np.isnan(x)).flatten()
+    obs_indices = np.where(~np.isnan(Z_row))[0] 
+    missing_indices = np.setdiff1d(np.arange(p), obs_indices) 
+    # TO DO: ord_in_obs = np.argwhere(obs_indices < num_ord).flatten()
     ord_in_obs = np.where(obs_indices < num_ord)[0]
     ord_obs_indices = obs_indices[ord_in_obs]
     # obtain correlation sub-matrices
@@ -54,9 +57,6 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates=1)
     sigma_obs_obs = sigma[np.ix_(obs_indices,obs_indices)]
     sigma_obs_missing = sigma[np.ix_(obs_indices, missing_indices)]
     sigma_missing_missing = sigma[np.ix_(missing_indices, missing_indices)]
-    # print('sigma_obs_obs', sigma_obs_obs)
-    # print('len', len(sigma_obs_obs))
-    # print('sigma_obs_missing', sigma_obs_missing)
 
     if len(missing_indices) > 0:
         tot_matrix = np.concatenate((np.identity(len(sigma_obs_obs)), sigma_obs_missing), axis=1)
