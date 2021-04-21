@@ -168,11 +168,11 @@ class ExpectationMaximization():
         u_lower[obs_indices] = norm.cdf(Z_ord_lower[obs_indices])
         u_upper = np.copy(Z_ord_upper)
         u_upper[obs_indices] = norm.cdf(Z_ord_upper[obs_indices])
+        assert all(0<=u_lower[obs_indices]) and all(u_lower[obs_indices] <= u_upper[obs_indices]) and  all(u_upper[obs_indices]<=1)
 
         np.random.seed(seed)
         for i in range(n):
             for j in range(k):
-                assert 0<=u_lower[i,j]<=u_upper[i,j]<=1 
                 if not np.isnan(Z_ord_upper[i,j]) and u_upper[i,j] > 0 and u_lower[i,j]<1:
                     u_sample = np.random.uniform(u_lower[i,j],u_upper[i,j])
                     Z_ord[i,j] = norm.ppf(u_sample)
