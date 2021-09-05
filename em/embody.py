@@ -14,12 +14,16 @@ def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates=1):
     num, p = Z.shape
     Z_imp = np.copy(Z)
     C = np.zeros((p,p))
+    trunc_warn = False
     for i in range(num):
-        c, z_imp, z = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma)
+        c, z_imp, z, warn = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma)
         Z_imp[i,:] = z_imp
         Z[i,:] = z
         C += c
+        trunc_warn = trunc_warn or warn
     # TO DO: no need to return Z, just edit it during the process
+    if trunc_warn:
+        print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More numerically stable version to come...')
     return C, Z_imp, Z
 
 
@@ -70,6 +74,7 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates=1)
 
     # OBSERVED ORDINAL ELEMENTS
     # when there is an observed ordinal to be imputed and another observed dimension, impute this ordinal
+    truncnorm_warn = False
     if len(obs_indices) >= 2 and len(ord_obs_indices) >= 1:
         for update_iter in range(num_ord_updates):
             # used to efficiently compute conditional mean
@@ -78,21 +83,27 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates=1)
                 j = obs_indices[ind]
                 not_j_in_obs = np.setdiff1d(np.arange(len(obs_indices)),ind) 
                 v = sigma_obs_obs_inv[:,ind]
-                new_var_ij = np.asscalar(1.0/v[ind])
+                new_var_ij = 1.0/v[ind]
+                new_var_ij = new_var_ij.item()
+                new_std_ij = np.sqrt(new_var_ij)
                 #new_mean_ij = np.dot(v[not_j_in_obs], Z_row[obs_indices[not_j_in_obs]]) * (-new_var_ij)
                 new_mean_ij = Z_row[j] - new_var_ij*sigma_obs_obs_inv_Z_row[ind]
-                mean, var = truncnorm.stats(
-                    a=(r_lower_row[j] - new_mean_ij) / np.sqrt(new_var_ij),
-                    b=(r_upper_row[j] - new_mean_ij) / np.sqrt(new_var_ij),
-                    loc=new_mean_ij,
-                    scale=np.sqrt(new_var_ij),
-                    moments='mv')
-                if np.isfinite(var):
-                    var_ordinal[j] = var
-                    if update_iter == num_ord_updates - 1:
-                        C[j,j] = C[j,j] + var 
-                if np.isfinite(mean):
-                    Z_row[j] = mean
+                a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
+                try:
+                    mean, var = truncnorm.stats(a=a_ij,b=b_ij,
+                        loc=new_mean_ij,
+                        scale=new_std_ij,
+                        moments='mv')
+                    if np.isfinite(var):
+                        var_ordinal[j] = var
+                        if update_iter == num_ord_updates - 1:
+                            C[j,j] = C[j,j] + var 
+                    if np.isfinite(mean):
+                        Z_row[j] = mean
+                except RuntimeWarning:
+                    #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
+                    truncnorm_warn = True
+    
 
     # MISSING ELEMENTS
     Z_obs = Z_row[obs_indices]
@@ -107,4 +118,4 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates=1)
             C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing) + np.matmul(cov_missing_obs_ord, J_obs_missing[ord_in_obs])
         else:
             C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
-    return C, Z_imp_row, Z_row
+    return C, Z_imp_row, Z_row, truncnorm_warn

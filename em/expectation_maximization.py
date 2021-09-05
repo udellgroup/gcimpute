@@ -6,10 +6,19 @@ from em.embody import _em_step_body_, _em_step_body, _em_step_body_row
 import warnings
 
 class ExpectationMaximization():
-    def __init__(self):
-        return
+    def __init__(self, X, cont_indices=None, ord_indices=None, max_ord=20):
+        if cont_indices is None and ord_indices is None:
+            # guess the indices from the data
+            self.cont_indices = self.get_cont_indices(X, max_ord)
+            self.ord_indices = ~self.cont_indices
+        else:
+            assert all(cont_indices ^ ord_indices)
+            self.cont_indices = cont_indices
+            self.ord_indices = ord_indices
+        self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices) ## estimate transformation function
+        
 
-    def impute_missing(self, X, cont_indices=None, ord_indices=None, threshold=0.01, max_iter=50, max_workers=4, max_ord=20, num_ord_updates=1, verbose=False, seed=1):
+    def impute_missing(self, X, threshold=0.01, max_iter=50, max_workers=1, num_ord_updates=1, verbose=False, seed=1):
         """
         Fits a Gaussian Copula and imputes missing values in X.
 
@@ -25,28 +34,24 @@ class ExpectationMaximization():
             X_imp (matrix): X with missing values imputed
             sigma_rearragned (matrix): an estimate of the covariance of the copula
         """
-        if cont_indices is None and ord_indices is None:
-            # guess the indices from the data
-            cont_indices = self.get_cont_indices(X, max_ord)
-            ord_indices = ~cont_indices
-        self.transform_function = TransformFunction(X, cont_indices, ord_indices) ## estimate transformation function
-        sigma, Z_imp = self._fit_covariance(X, cont_indices, ord_indices, threshold, max_iter, max_workers, num_ord_updates, verbose, seed)
+        sigma, Z_imp = self._fit_covariance(X, threshold, max_iter, max_workers, num_ord_updates, verbose, seed)
         # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
         sigma_rearranged = np.empty(sigma.shape)
-        sigma_rearranged[np.ix_(ord_indices,ord_indices)] = sigma[:np.sum(ord_indices),:np.sum(ord_indices)]
-        sigma_rearranged[np.ix_(cont_indices,cont_indices)] = sigma[np.sum(ord_indices):,np.sum(ord_indices):]
-        sigma_rearranged[np.ix_(cont_indices,ord_indices)] = sigma[np.sum(ord_indices):,:np.sum(ord_indices)]
-        sigma_rearranged[np.ix_(ord_indices,cont_indices)] =  sigma_rearranged[np.ix_(cont_indices,ord_indices)].T
+        num_ord_indices = np.sum(self.ord_indices)
+        sigma_rearranged[np.ix_(self.ord_indices,self.ord_indices)] = sigma[:num_ord_indices,:num_ord_indices]
+        sigma_rearranged[np.ix_(self.cont_indices,self.cont_indices)] = sigma[num_ord_indices:,num_ord_indices:]
+        sigma_rearranged[np.ix_(self.cont_indices,self.ord_indices)] = sigma[num_ord_indices:,:num_ord_indices]
+        sigma_rearranged[np.ix_(self.ord_indices,self.cont_indices)] =  sigma_rearranged[np.ix_(self.cont_indices,self.ord_indices)].T
         # Rearrange Z_imp so that it's columns correspond to the columns of X
         Z_imp_rearranged = np.empty(X.shape)
-        Z_imp_rearranged[:,ord_indices] = Z_imp[:,:np.sum(ord_indices)]
-        Z_imp_rearranged[:,cont_indices] = Z_imp[:,np.sum(ord_indices):]
+        Z_imp_rearranged[:,self.ord_indices] = Z_imp[:,:num_ord_indices]
+        Z_imp_rearranged[:,self.cont_indices] = Z_imp[:,num_ord_indices:]
         X_imp = np.empty(X.shape)
-        X_imp[:,cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
-        X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
+        X_imp[:,self.cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
+        X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
         return X_imp, sigma_rearranged
 
-    def _fit_covariance(self, X, cont_indices, ord_indices, threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, verbose=False, seed=1):
+    def _fit_covariance(self, X, threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, verbose=False, seed=1):
         """
         Fits the covariance matrix of the gaussian copula using the data 
         in X and returns the imputed latent values corresponding to 
@@ -64,7 +69,6 @@ class ExpectationMaximization():
             sigma (matrix): an estimate of the covariance of the copula
             Z_imp (matrix): estimates of latent values
         """
-        assert cont_indices is not None or ord_indices is not None
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
         Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, seed)
         Z_cont = self.transform_function.get_cont_latent()
@@ -113,22 +117,27 @@ class ExpectationMaximization():
         n = Z.shape[0]
         p = Z.shape[1]
         res = []
-        if max_workers is None:
-            max_workers = min(32, os.cpu_count()+4)
-        divide = n/max_workers * np.arange(max_workers+1)
-        divide = divide.astype(int)
-        args = [(np.copy(Z[divide[i]:divide[i+1],:]), r_lower[divide[i]:divide[i+1],:], r_upper[divide[i]:divide[i+1],:], sigma, num_ord_updates) \
+        if max_workers ==1:
+            args = (Z, r_lower, r_upper, sigma, num_ord_updates)
+            C, Z_imp, Z = _em_step_body_(args)
+            C = C/n
+        else:
+            if max_workers is None: max_workers = min(32, os.cpu_count()+4)
+            divide = n/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [(np.copy(Z[divide[i]:divide[i+1],:]), r_lower[divide[i]:divide[i+1],:], r_upper[divide[i]:divide[i+1],:], sigma, num_ord_updates) \
                                for i in range(max_workers)]
-        with ProcessPoolExecutor(max_workers=max_workers) as pool: 
-            res = pool.map(_em_step_body_, args)
-            Z_imp = np.empty((n,p))
-            C = np.zeros((p,p))
-            for i,(C_divide, Z_imp_divide, Z_divide) in enumerate(res):
-                C += C_divide/n
-                Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
-                Z[divide[i]:divide[i+1],:] = Z_divide
-            sigma = np.cov(Z_imp, rowvar=False) + C 
-            return sigma, Z_imp, Z
+            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
+                res = pool.map(_em_step_body_, args)
+                Z_imp = np.empty((n,p))
+                C = np.zeros((p,p))
+                for i,(C_divide, Z_imp_divide, Z_divide) in enumerate(res):
+                    C += C_divide/n
+                    Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
+                    Z[divide[i]:divide[i+1],:] = Z_divide
+
+        sigma = np.cov(Z_imp, rowvar=False) + C 
+        return sigma, Z_imp, Z
 
     def _project_to_correlation(self, covariance):
         """
