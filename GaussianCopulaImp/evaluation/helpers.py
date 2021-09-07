@@ -1,4 +1,5 @@
 import numpy as np 
+from scipy.stats import random_correlation, norm, expon
 
 def _cont_to_ord(x, k, by = 'dist', seed=1):
     """
@@ -11,20 +12,22 @@ def _cont_to_ord(x, k, by = 'dist', seed=1):
     np.random.seed(seed)
     std_dev = np.std(x)
     if by == 'dist':
-        cuttoffs = np.linspace(np.min(x), np.max(x), k+1)[1:]
+        cutoffs = np.linspace(np.min(x), np.max(x), k+1)[1:]
     elif by == 'quantile':
         # samping cutoffs from 5% quantile to 95% quantile 
-        select = x>np.quantile(x, 0.05) & x<np.quantile(0.95)
+        select = (x>np.quantile(x, 0.05)) & (x<np.quantile(x, 0.95))
         cutoffs = np.random.choice(x[select], k-1, replace = False)
     elif by == 'sampling':
         # sampling from standard normal, does not depend on the input data
         cutoffs = np.random.normal(k-1)
+    else:
+        raise ValueError('Unsupported cutoff_by option')
     # TODO:
     # cuttoff = np.hstack((min_cutoff, cutoff, max_cutoff))
     # x = np.digitize(x, cuttoff)
     ords = np.zeros(len(x))
-    for cuttoff in cuttoffs:
-        ords += (x > cuttoff).astype(int)
+    for cutoff in cutoffs:
+        ords += (x > cutoff).astype(int)
     
     return ords.astype(int) 
 
@@ -45,9 +48,9 @@ def cont_to_ord(x, k, by = 'dist', seed=1):
             raise ValueError("Failure in generating cutoffs")
     return result
 
-def generate_sigma(seed):
+def generate_sigma(seed, p=15):
     np.random.seed(seed)
-    W = np.random.normal(size=(15, 15))
+    W = np.random.normal(size=(p, p))
     covariance = np.matmul(W, W.T)
     D = np.diagonal(covariance)
     D_neg_half = np.diag(1.0/np.sqrt(D))
@@ -81,6 +84,27 @@ def generate_LRGC(rank, sigma, n=500, p_seq=(100,100,100), ord_num=5, cont_type 
         for ord_index in ord_indices:
             X_true[:,ord_index] = continuous2ordinal(Z[:,ord_index], k=ord_num)
     return X_true, W
+
+
+def generate_mixed_from_gc(sigma, n=2000, seed=1, var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}, cutoff_by='dist'):
+    cont_index = var_types['cont']
+    ord_index = var_types['ord']
+    bin_index = var_types['bin']
+    all_index = cont_index + ord_index + bin_index
+    p = len(all_index)
+    if min(all_index)!=0 or max(all_index) != (p-1) or len(set(all_index)) != p:
+        raise ValueError('Inconcistent specification of variable types indexing')
+    if sigma.shape[1] != p :
+        raise ValueError('Inconcistent dimension between variable lengths and copula correlation')
+    np.random.seed(seed)
+    X = np.random.multivariate_normal(np.zeros(p), sigma, size=n)
+    # marginal transformation
+    X[:,cont_index] = expon.ppf(norm.cdf(X[:,cont_index]), scale = 3)
+    for ind in ord_index:
+        X[:,ind] = cont_to_ord(X[:,ind], k=5, by=cutoff_by)
+    for ind in bin_index:
+        X[:,ind] = cont_to_ord(X[:,ind], k=2, by=cutoff_by)
+    return X
     
 def get_mae(x_imp, x_true, x_obs=None):
     """
@@ -186,23 +210,19 @@ def mask_types(X, mask_num, seed):
     """
     Masks mask_num entries of the continuous, ordinal, and binary columns of X
     """
+    if X.shape[1] % 3 != 0:
+        raise NotImplementedError('Current implementation requires three types of variables have the same number of variables')
     X_masked = np.copy(X)
     mask_indices = []
-    num_rows = X_masked.shape[0]
-    num_cols = X_masked.shape[1]
+    num_rows, num_cols = X_masked.shape
+    num_cols_type = num_cols // 3
+    np.random.seed(seed)
     for i in range(num_rows):
-        np.random.seed(seed*num_rows-i) # uncertain if this is necessary
-        rand_idx = np.concatenate((np.random.choice(num_cols // 3, mask_num, False), np.random.choice(num_cols // 3, mask_num, False), np.random.choice(num_cols // 3, mask_num, False)))
-        for idx in rand_idx[:mask_num]:
-            X_masked[i, idx] = np.nan
-            mask_indices.append((i,idx))
-        for idx in rand_idx[mask_num:2*mask_num]:
-            X_masked[i, idx+5] = np.nan
-            mask_indices.append((i,idx+num_cols // 3))
-        for idx in rand_idx[2*mask_num:]:
-            X_masked[i, idx+10] = np.nan
-            mask_indices.append((i,idx+num_cols // 3 * 2))
-    return X_masked, mask_indices
+        for index_start in [0, num_cols_type, 2*num_cols_type]:
+            rand_idx = np.random.choice(num_cols_type, mask_num, False) + index_start
+            X_masked[i, rand_idx] = np.nan
+
+    return X_masked
 
 def mask(X, mask_fraction, seed=0, verbose=False):
     """
