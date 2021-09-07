@@ -48,33 +48,25 @@ class ExpectationMaximization():
             self.cont_indices = self.get_cont_indices(X, self.max_ord)
             self.ord_indices = ~self.cont_indices
 
-        self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices) ## estimate transformation function
+        #self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices) 
+        self._fit_initial_transformation(X)
         Z_imp = self._fit_covariance(X, threshold, max_iter, max_workers, num_ord_updates, batch_size, batch_c, verbose, seed)
         # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
 
-        #_order = self.back_to_original_order()
+        
+        _order = self.back_to_original_order()
         # Rearrange Z_imp so that it's columns correspond to the columns of X
-        #Z_imp_rearranged = Z_imp[:,_order]
-        ##X_imp = np.empty(X.shape)
-        #X_imp[:,self.cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
-        #X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
-        #sigma_rearranged = self.sigma[_order, _order]
-        sigma = self.sigma
-        sigma_rearranged = np.empty(sigma.shape)
-        num_ord_indices = np.sum(self.ord_indices)
-        sigma_rearranged[np.ix_(self.ord_indices,self.ord_indices)] = sigma[:num_ord_indices,:num_ord_indices]
-        sigma_rearranged[np.ix_(self.cont_indices,self.cont_indices)] = sigma[num_ord_indices:,num_ord_indices:]
-        sigma_rearranged[np.ix_(self.cont_indices,self.ord_indices)] = sigma[num_ord_indices:,:num_ord_indices]
-        sigma_rearranged[np.ix_(self.ord_indices,self.cont_indices)] =  sigma_rearranged[np.ix_(self.cont_indices,self.ord_indices)].T
-        # Rearrange Z_imp so that it's columns correspond to the columns of X
-        Z_imp_rearranged = np.empty(X.shape)
-        Z_imp_rearranged[:,self.ord_indices] = Z_imp[:,:num_ord_indices]
-        Z_imp_rearranged[:,self.cont_indices] = Z_imp[:,num_ord_indices:]
+        Z_imp_rearranged = Z_imp[:,_order]
         X_imp = np.empty(X.shape)
         X_imp[:,self.cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
         X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
+        sigma_rearranged = self.sigma[np.ix_(_order, _order)]
 
         return X_imp, sigma_rearranged
+
+    def _fit_initial_transformation(self,  X):
+        # estimate transformation function
+        self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
 
     def _fit_covariance(self, X, threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, batch_size=100, batch_c=0, verbose=False, seed=1):
         """
@@ -281,16 +273,16 @@ class ExpectationMaximization():
 
     def back_to_original_order(self):
         #mapping = {}
-        num_cont = self.cont_indices.sum()
+        num_ord = self.ord_indices.sum()
         seen_cont = seen_ord = 0
         orders = [] 
         for i,index in enumerate(self.cont_indices):
             if index:
                 #mapping[seen_cont] = i
-                orders.append(seen_cont)
+                orders.append(seen_cont+num_ord)
                 seen_cont += 1
             else:
-                orders.append(num_cont+seen_ord)
+                orders.append(seen_ord)
                 #mapping[num_cont + seen_ord] = i
                 seen_ord += 1
         p = len(orders)

@@ -27,8 +27,6 @@ class OnlineExpectationMaximization(ExpectationMaximization):
 
         # For online/offline evaluation
     def fit_one_pass(self, X, BATCH_SIZE=10, decay_coef=0.5, batch_c=5, constant_decay_coef = True, max_workers=1, sigma_diff_output = False):
-        if not constant_decay_coef:
-            decay_coef
         n,p = X.shape
         Ximp = np.empty(X.shape)
         j=0
