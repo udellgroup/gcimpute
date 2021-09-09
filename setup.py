@@ -2,12 +2,12 @@ from setuptools import setup, find_packages
 
 setup(
     name='GaussianCopulaImp',
-    version='0.1',
-    description='Online Expectation Maximization for Missing Value Imputation',
+    version='0.0.3',
+    description='A missing value imputation algorithm using the Gaussian copula model',
     packages=find_packages(),
-    url='https://github.com/udellgroup/online_mixed_gc_imp',
-    author = 'Eric Landgrebe, Yuxuan Zhao, Eliot Shekhtman',
-    author_email = '{ecl93, yz2295, ess239}@cornell.edu',
+    url='https://github.com/udellgroup/GaussianCopulaImp',
+    author = 'Yuxuan Zhao, Eric Landgrebe, Eliot Shekhtman, Madeleiene Udell',
+    author_email = 'yz2295@cornell.edu',
     maintainer = 'Yuxuan Zhao',
     maintainer_email = 'yz2295@cornell.edu',
     install_requires=[

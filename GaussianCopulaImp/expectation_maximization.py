@@ -1,6 +1,6 @@
-from GaussianCopulaImp.transforms.transform_function import TransformFunction
-from GaussianCopulaImp.transforms.online_transform_function import OnlineTransformFunction
-from GaussianCopulaImp.em.embody import _em_step_body_, _em_step_body, _em_step_body_row
+from .transform_function import TransformFunction
+from .online_transform_function import OnlineTransformFunction
+from .embody import _em_step_body_, _em_step_body, _em_step_body_row
 from scipy.stats import norm, truncnorm
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor

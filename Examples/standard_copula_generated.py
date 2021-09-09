@@ -1,5 +1,5 @@
-from GaussianCopulaImp.em.expectation_maximization import ExpectationMaximization
-from GaussianCopulaImp.evaluation.helpers import generate_sigma, generate_mixed_from_gc, mask_types, get_smae, get_scaled_error
+from GaussianCopulaImp.expectation_maximization import ExpectationMaximization
+from helpers import generate_sigma, generate_mixed_from_gc, mask_types, get_smae, get_scaled_error
 import numpy as np
 import pandas as pd
 import time
