@@ -70,6 +70,7 @@ if __name__ == "__main__":
 
 # Results for reference
 #----------------------------------------------
+# Run command $ python standard_copula_generated.py
 # Standard run:
 #----------------------------------------------
 # when cutoff_by is 'dist'
@@ -85,6 +86,7 @@ if __name__ == "__main__":
 # ord imputation SMAE: mean 0.731, std 0.015
 # bin imputation SMAE: mean 0.835, std 0.062
 #----------------------------------------------
+# Run command $ python standard_copula_generated.py 10 4 40 5 100
 # Minibatch run 2 passes (batch_c = 5, batch_size = 40, max_iter = 100)
 #----------------------------------------------
 # when cutoff_by is 'dist'
@@ -94,6 +96,7 @@ if __name__ == "__main__":
 # ord imputation SMAE: mean 0.795, std 0.025
 # bin imputation SMAE: mean 0.660, std 0.033
 #----------------------------------------------
+# Run command $ python standard_copula_generated.py 10 4 40 5 50
 # Minibatch run 1 passes (batch_c = 5, batch_size = 40, max_iter = 50)
 #----------------------------------------------
 # when cutoff_by is 'dist'
@@ -103,6 +106,7 @@ if __name__ == "__main__":
 # ord imputation SMAE: mean 0.818, std 0.027
 # bin imputation SMAE: mean 0.682, std 0.036
 #-----------------------------------------------
+# Run command $ python standard_copula_generated.py 10 4 40 5 50 1
 # Online run 1 pass (batch_c = 5, batch_size = 40)
 #----------------------------------------------
 # when cutoff_by is 'dist'
