@@ -27,6 +27,8 @@ X_mask[mask_rows_id[mask_size_each:], 1] = np.nan
 # model fitting 
 em = EM()
 X_imp, sigma_est = em.impute_missing(X=X_mask, verbose=True)
+
+# Evaluation
 print(f'Estimated latent correlation is {sigma_est[0,1]}')
 err_cont = X_imp[mask_rows_id[:mask_size_each], 0] - X[mask_rows_id[:mask_size_each], 0]
 nrmse_cont = np.sqrt(np.power(err_cont, 2).mean()/np.power(X[mask_rows_id[:mask_size_each], 0],2).mean())
