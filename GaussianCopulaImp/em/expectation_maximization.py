@@ -1,4 +1,5 @@
 from GaussianCopulaImp.transforms.transform_function import TransformFunction
+from GaussianCopulaImp.transforms.online_transform_function import OnlineTransformFunction
 from GaussianCopulaImp.em.embody import _em_step_body_, _em_step_body, _em_step_body_row
 from scipy.stats import norm, truncnorm
 import numpy as np
@@ -28,7 +29,11 @@ class ExpectationMaximization():
             assert svdvals(sigma_init).min() > 1e-7, message
         self.sigma = sigma_init
 
-    def impute_missing(self, X, threshold=0.01, max_iter=50, max_workers=1, num_ord_updates=1, batch_size=100, batch_c=0, verbose=False, seed=1):
+    def impute_missing(
+                       self, X, threshold=0.01, max_iter=50, max_workers=1, num_ord_updates=1, 
+                       batch_size=100, batch_c=0, 
+                       window_size=200, const_decay = -1, 
+                       verbose=False, seed=1):
         """
         Fits a Gaussian Copula and imputes missing values in X.
 
@@ -48,12 +53,10 @@ class ExpectationMaximization():
             self.cont_indices = self.get_cont_indices(X, self.max_ord)
             self.ord_indices = ~self.cont_indices
 
-        #self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices) 
-        self._fit_initial_transformation(X)
+        #self._fit_initial_transformation(X, window_size)
+        self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
         Z_imp = self._fit_covariance(X, threshold, max_iter, max_workers, num_ord_updates, batch_size, batch_c, verbose, seed)
         # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
-
-        
         _order = self.back_to_original_order()
         # Rearrange Z_imp so that it's columns correspond to the columns of X
         Z_imp_rearranged = Z_imp[:,_order]
@@ -64,11 +67,10 @@ class ExpectationMaximization():
 
         return X_imp, sigma_rearranged
 
-    def _fit_initial_transformation(self,  X):
-        # estimate transformation function
-        self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
 
-    def _fit_covariance(self, X, threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, batch_size=100, batch_c=0, verbose=False, seed=1):
+    def _fit_covariance(self, X, threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, 
+                        batch_size=100, batch_c=0, 
+                        verbose=False, seed=1):
         """
         Fits the covariance matrix of the gaussian copula using the data 
         in X and returns the imputed latent values corresponding to 
@@ -86,6 +88,7 @@ class ExpectationMaximization():
             sigma (matrix): an estimate of the covariance of the copula
             Z_imp (matrix): estimates of latent values
         """
+        n,p = X.shape
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
         Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, seed)
         Z_cont = self.transform_function.get_cont_latent()
@@ -99,7 +102,7 @@ class ExpectationMaximization():
             self.sigma = np.corrcoef(Z_imp, rowvar=False)
         # Latent variable matrix with columns sorted as ordinal, continuous
         Z = np.concatenate((Z_ord, Z_cont), axis=1)
-        n,p = Z.shape
+            
 
         # permutation of indices of data for stochastic fitting
         training_permutation = np.random.permutation(n)
@@ -140,6 +143,86 @@ class ExpectationMaximization():
         if verbose and i == max_iter-1: 
             print("Convergence not achieved at maximum iterations")
         return  Z_imp
+    
+    def impute_missing_online(self, X, threshold=0.01, max_iter=50, max_workers=1, num_ord_updates=1, batch_size=100, batch_c=0, window_size=200, const_decay = -1, verbose=False, seed=1):
+        """
+        Fits a Gaussian Copula and imputes missing values in X.
+        Args:s
+            X (matrix): data matrix with entries to be imputed
+            cont_indices (array): logical, true at indices of the continuous entries
+            ord_indices (array): logical, true at indices of the ordinal entries
+            threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
+            max_iter (int): the maximum number of iterations for copula estimation
+            max_workers: the maximum number of workers for parallelism
+            max_ord: maximum number of levels in any ordinal for detection of ordinal indices
+        Returns:
+            X_imp (matrix): X with missing values imputed
+            sigma_rearragned (matrix): an estimate of the covariance of the copula
+        """
+        assert self.cont_indices is not None and self.ord_indices is not None, 'Variable types must be provided for online fit'
+        self.transform_function = OnlineTransformFunction(self.cont_indices, self.ord_indices, window_size=window_size)
+        n,p = X.shape
+        X_imp = np.zeros_like(X)
+        if self.sigma is None:
+            self.sigma = np.identity(p)
+
+        i=0
+        while True:
+            batch_lower= i*batch_size
+            batch_upper=min((i+1)*batch_size, n)
+            if batch_lower>= n:
+                break 
+            indices = np.arange(batch_lower, batch_upper, 1)
+            decay_coef = const_decay if 0<const_decay<1 else batch_c/(i + 1 + batch_c)
+            X_imp[indices,:] = self.partial_fit_and_predict(X[indices,:], max_workers=max_workers, decay_coef=decay_coef, num_ord_updates=num_ord_updates)
+
+            i+=1
+        _order = self.back_to_original_order()
+        sigma_rearranged = self.sigma[np.ix_(_order, _order)]
+        return X_imp, sigma_rearranged
+
+    # TO DO: add a function attribute which takes estimated model and new point as input to return immediate imputaiton
+    #  that would serve as out-of-sample prediction without updating the model parameter. Computation will be smaller but the complexity is still O(p^3)
+    def partial_fit_and_predict(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, sigma_update=True, marginal_update = True, seed = 1):
+        """
+        Updates the fit of the copula using the data in X_batch and returns the 
+        imputed values and the new correlation for the copula
+
+        Args:
+            X_batch (matrix): data matrix with entries to use to update copula and be imputed
+            max_workers (positive int): the maximum number of workers for parallelism 
+            num_ord_updates (positive int): the number of times to re-estimate the latent ordinals per batch
+            decay_coef (float in (0,1)): tunes how much to weight new covariance estimates
+        Returns:
+            X_imp (matrix): X_batch with missing values imputed
+        """
+        
+        #if not update:
+            #old_window = self.transform_function.window
+            #old_update_pos = self.transform_function.update_pos
+        if marginal_update:
+            self.transform_function.partial_fit(X_batch)
+        # update marginals with the new batch
+        #self.transform_function.partial_fit(X_batch)
+        # print("X_batch", X_batch)
+        #
+        # _fit_covariance step
+        Z_ord_lower, Z_ord_upper = self.transform_function.partial_evaluate_ord_latent(X_batch)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, seed)
+        Z_cont = self.transform_function.partial_evaluate_cont_latent(X_batch) 
+        Z = np.concatenate((Z_ord, Z_cont), axis=1)
+        sigma, Z_imp, Z = self._em_step(Z, Z_ord_lower, Z_ord_upper, max_workers, num_ord_updates)
+        if sigma_update:
+            self.sigma = sigma*decay_coef + (1-decay_coef)*self.sigma
+
+        # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
+        _order = self.back_to_original_order()
+        Z_imp_rearranged = Z_imp[:,_order]
+        X_imp = np.empty(Z_imp.shape)
+        X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged, X_batch)
+        X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged, X_batch)
+        return X_imp
+
 
     def _em_step(self, Z, r_lower, r_upper, max_workers=1, num_ord_updates=1):
         """
@@ -160,6 +243,7 @@ class ExpectationMaximization():
 
         """
         n,p = Z.shape
+        assert n>0, 'EM step receives empty input'
         if max_workers ==1:
             args = (Z, r_lower, r_upper, self.sigma, num_ord_updates)
             C, Z_imp, Z = _em_step_body_(args)

@@ -7,7 +7,7 @@ def _em_step_body_(args):
     """
     return _em_step_body(*args)
 
-def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates=1):
+def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates):
     """
     Iterate the rows over provided matrix 
     """
@@ -16,7 +16,7 @@ def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates=1):
     C = np.zeros((p,p))
     trunc_warn = False
     for i in range(num):
-        c, z_imp, z, warn = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma)
+        c, z_imp, z, warn = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates)
         Z_imp[i,:] = z_imp
         Z[i,:] = z
         C += c
@@ -27,7 +27,7 @@ def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates=1):
     return C, Z_imp, Z
 
 
-def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates=1):
+def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
     """
     The body of the em algorithm for each row
     Returns a new latent row, latent imputed row and C matrix, which, when added

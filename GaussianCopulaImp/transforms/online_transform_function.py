@@ -17,8 +17,9 @@ class OnlineTransformFunction():
         self.ord_indices = ord_indices
         p = len(cont_indices)
         self.window_size = window_size
-        self.window = np.array([[np.nan for x in range(p)] for y in range(self.window_size)]).astype(np.float64)
-        self.update_pos = np.zeros(p).astype(np.int)
+        #self.window = np.array([[np.nan for x in range(p)] for y in range(self.window_size)]).astype(np.float64)
+        self.window = np.ones((self.window_size, p), dtype=np.float64) * np.nan
+        self.update_pos = np.zeros(p, dtype=np.int64)
         if X is not None:
             self.partial_fit(X)
         
