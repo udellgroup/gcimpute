@@ -87,6 +87,11 @@ def generate_LRGC(rank, sigma, n=500, p_seq=(100,100,100), ord_num=5, cont_type 
 
 
 def generate_mixed_from_gc(sigma, n=2000, seed=1, var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}, cutoff_by='dist'):
+    '''
+    sigma: either a single correlation matrix or a list of correlation matrices
+    '''
+    if not isinstance(sigma, list):
+        sigma = [sigma]
     cont_index = var_types['cont']
     ord_index = var_types['ord']
     bin_index = var_types['bin']
@@ -94,10 +99,10 @@ def generate_mixed_from_gc(sigma, n=2000, seed=1, var_types = {'cont':list(range
     p = len(all_index)
     if min(all_index)!=0 or max(all_index) != (p-1) or len(set(all_index)) != p:
         raise ValueError('Inconcistent specification of variable types indexing')
-    if sigma.shape[1] != p :
+    if sigma[0].shape[1] != p :
         raise ValueError('Inconcistent dimension between variable lengths and copula correlation')
     np.random.seed(seed)
-    X = np.random.multivariate_normal(np.zeros(p), sigma, size=n)
+    X = np.concatenate([np.random.multivariate_normal(np.zeros(p), s, size=n) for s in sigma], axis=0)
     # marginal transformation
     X[:,cont_index] = expon.ppf(norm.cdf(X[:,cont_index]), scale = 3)
     for ind in ord_index:
@@ -105,6 +110,7 @@ def generate_mixed_from_gc(sigma, n=2000, seed=1, var_types = {'cont':list(range
     for ind in bin_index:
         X[:,ind] = cont_to_ord(X[:,ind], k=2, by=cutoff_by)
     return X
+
     
 def get_mae(x_imp, x_true, x_obs=None):
     """
@@ -133,70 +139,75 @@ def get_rmse(x_imp, x_true, x_obs = None, relative=False):
     return rmse if not relative else rmse/np.sqrt(np.mean(np.power(x_true[loc],2)))
         
 
-def get_smae(x_imp, x_true, x_obs, Med=None, per_type=False, cont_loc=None, bin_loc=None, ord_loc=None):
+def get_smae(x_imp, x_true, x_obs, 
+             baseline=None, per_type=False, var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}):
     """
     gets Scaled Mean Absolute Error (SMAE) between x_imp and x_true
     """
-    error = np.zeros((x_obs.shape[1],2))
+    p = x_obs.shape[1]
+    # the first column records the imputation error of x_imp,
+    # while the second column records the imputation error of baseline
+    error = np.zeros((p,2))
+
+    # iterate over columns/variables
     for i, col in enumerate(x_obs.T):
         test = np.bitwise_and(~np.isnan(x_true[:,i]), np.isnan(col))
+        # skip the column if there is no evaluation entry
         if np.sum(test) == 0:
             error[i,0] = np.nan
             error[i,1] = np.nan
+            print(f'There is no entry to be evaluated in variable {col}.')
             continue
-        col_nonan = col[~np.isnan(col)]
+        
+        base_imp = np.median(col[~np.isnan(col)]) if baseline is None else baseline[i]
+
         x_true_col = x_true[test,i]
         x_imp_col = x_imp[test,i]
-        if Med is not None:
-            median = Med[i]
-        else:
-            median = np.median(col_nonan)
         diff = np.abs(x_imp_col - x_true_col)
-        med_diff = np.abs(median - x_true_col)
+        base_diff = np.abs(base_imp - x_true_col)
         error[i,0] = np.sum(diff)
-        error[i,1]= np.sum(med_diff)
+        error[i,1] = np.sum(base_diff)
+        if error[i,1] == 0:
+            print(f'Baseline imputation achieves zero imputation error in variable {i+1}.' 
+                  f'There are {sum(test)} imputed entries, ranging from {x_true_col.min()} (min) to {x_true_col.max()} (max).')
+            error[i,1] = np.nan
+
     if per_type:
-        if not cont_loc:
-            cont_loc = [True] * 5 + [False] * 10
-        if not bin_loc:
-            bin_loc = [False] * 5 + [True] * 5 + [False] * 5 
-        if not ord_loc:
-            ord_loc = [False] * 10 + [True] * 5
-        loc = [cont_loc, bin_loc, ord_loc]
-        scaled_diffs = np.zeros(3)
-        for j in range(3):
-            scaled_diffs[j] = np.sum(error[loc[j],0])/np.sum(error[loc[j],1])
+        scaled_diffs = {}
+        for name, val in var_types.items():
+            scaled_diffs[name] = np.sum(error[name,0])/np.sum(error[name,1])
     else:
         scaled_diffs = error[:,0] / error[:,1]
+
     return scaled_diffs
 
-def get_smae_per_type(x_imp, x_true, x_obs, cont_loc=None, bin_loc=None, ord_loc=None):
-    if not cont_loc:
-        cont_loc = [True] * 5 + [False] * 10
-    if not bin_loc:
-        bin_loc = [False] * 5 + [True] * 5 + [False] * 5 
-    if not ord_loc:
-        ord_loc = [False] * 10 + [True] * 5
-    loc = [cont_loc, bin_loc, ord_loc]
-    scaled_diffs = np.zeros(3)
-    for j in range(3):
-        missing = np.isnan(x_obs[:,loc[j]])
-        med = np.median(x_obs[:,loc[j]][~missing])
-        diff = np.abs(x_imp[:,loc[j]][missing] - x_true[:,loc[j]][missing])
-        med_diff = np.abs(med - x_true[:,loc[j]][missing])
-        scaled_diffs[j] = np.sum(diff)/np.sum(med_diff)
+def batch_iterable(X, batch_size=40):
+    n = X.shape[0]
+    start = 0
+    while start < n:
+        end = min(start + batch_size, n)
+        yield X[start:end]
+        start = end
+
+def get_smae_batch(x_imp, x_true, x_obs, 
+                   batch_size = 40,
+                   baseline=None, per_type=False, var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}):
+    result = []
+    baseline = np.nanmedian(x_obs,0) if baseline is None else baseline
+    for imp, true, obs in zip(batch_iterable(x_imp,batch_size), batch_iterable(x_true,batch_size), batch_iterable(x_obs,batch_size)):
+        scaled_diffs = get_smae(imp, true, obs, baseline=baseline, per_type=False)
+        result.append(scaled_diffs)
+    result = np.array(result)
+
+    if per_type:
+        scaled_diffs = {}
+        for name, val in var_types.items():
+            scaled_diffs[name] = np.nanmean(result[:,val], axis=1)
+    else:
+        scaled_diffs = result
+
     return scaled_diffs
-    
-def get_smae_per_type_online(x_imp, x_true, x_obs, Med):
-    for i, col in enumerate(x_obs.T):
-        missing = np.isnan(col)
-        x_true_col = x_true[np.isnan(col),i]
-        x_imp_col = x_imp[np.isnan(col),i]
-        median = Med[i]
-        diff = np.abs(x_imp_col - x_true_col)
-        med_diff = np.abs(median - x_true_col)
-        scaled_diffs[i] = np.sum(diff)/np.sum(med_diff)
-    return scaled_diffs
+
 
 
 def get_scaled_error(sigma_imp, sigma):

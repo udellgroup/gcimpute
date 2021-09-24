@@ -6,6 +6,9 @@ import time
 from tqdm import tqdm
 from collections import defaultdict
 import sys
+import argparse
+
+
 
 def run_onerep(seed, n=2000, batch_size= 40, batch_c=0, max_iter=50, online=False, num_ord_updates=1,
 			   var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))},
@@ -22,14 +25,18 @@ def run_onerep(seed, n=2000, batch_size= 40, batch_c=0, max_iter=50, online=Fals
 		cont_indices[var_types['cont']] = 1
 		var_types_input = {'cont':cont_indices==1, 'ord':cont_indices==0}
 		em = ExpectationMaximization(var_types = var_types_input)
-		X_imp, sigma_imp = em.impute_missing_online(X=X_masked, 
+		out = em.impute_missing_online(
+			X=X_masked, 
 			num_ord_updates=num_ord_updates,
-			threshold=threshold, max_iter=max_iter, max_workers=max_workers, batch_size=batch_size, batch_c=batch_c)
+			threshold=threshold, max_workers=max_workers, batch_size=batch_size, batch_c=batch_c)
+		X_imp, sigma_imp = out['imputed_data'], out['copula_corr']
 	else:
 		em = ExpectationMaximization()
-		X_imp, sigma_imp = em.impute_missing(X=X_masked, 
+		out = em.impute_missing(
+			X=X_masked, 
 			num_ord_updates=num_ord_updates,
 			threshold=threshold, max_iter=max_iter, max_workers=max_workers, batch_size=batch_size, batch_c=batch_c)
+		X_imp, sigma_imp = out['imputed_data'], out['copula_corr']
 	end_time = time.time()
 	# save results 
 	smae = get_smae(X_imp, X, X_masked)
@@ -42,7 +49,8 @@ def main(NUM_STEPS=10, n=2000, batch_size= 40, batch_c=0, max_iter=50, online=Fa
 		 MASK_NUM=2, threshold=0.01, max_workers=4, cutoff_by='dist'):
 	output_all = defaultdict(list)
 	for i in tqdm(range(1, NUM_STEPS + 1)):
-		output = run_onerep(seed=i, n=n, batch_size=batch_size, batch_c=batch_c, var_types=var_types, max_iter=max_iter, 
+		output = run_onerep(
+			seed=i, n=n, batch_size=batch_size, batch_c=batch_c, var_types=var_types, max_iter=max_iter, 
 			online=online, num_ord_updates=num_ord_updates,
 			MASK_NUM=MASK_NUM, threshold=threshold, max_workers=max_workers, cutoff_by=cutoff_by)
 		for name, value in output.items():
@@ -52,20 +60,25 @@ def main(NUM_STEPS=10, n=2000, batch_size= 40, batch_c=0, max_iter=50, online=Fa
 		output_all[name] = np.array(value)
 	print(f"Runtime in seconds: mean {output_all['runtime'].mean():.2f}, std {output_all['runtime'].std():.2f}")
 	print(f"Relative correlation error: mean {output_all['cor_error'].mean():.3f}, std {output_all['cor_error'].std():.3f}")
+	
 	mean_smaes = np.mean(output_all['smae'],axis=0)
 	std_smaes = np.std(output_all['smae'],axis=0)
 	for name,value in var_types.items():
 		print(f'{name} imputation SMAE: mean {mean_smaes[value].mean():.3f}, std {mean_smaes[value].std():.3f}')
 
 if __name__ == "__main__":
-	NUM_STEPS = 10 if len(sys.argv) == 1 else int(sys.argv[1])
-	max_workers = 4 if len(sys.argv) <=2 else int(sys.argv[2])
-	batch_size = 40 if len(sys.argv) <=3 else int(sys.argv[3])
-	batch_c = 0 if len(sys.argv) <=4 else int(sys.argv[4])
-	max_iter = 50 if len(sys.argv) <=5 else int(sys.argv[5])
-	online = False  if len(sys.argv) <=6 else int(sys.argv[6])==1
-	num_ord_updates = 1 if len(sys.argv) <=7 else int(sys.argv[7])
-	main(NUM_STEPS=NUM_STEPS, max_workers=max_workers, batch_size=batch_size, batch_c=batch_c, max_iter=max_iter, online=online, num_ord_updates=num_ord_updates)
+	parser = argparse.ArgumentParser()
+	parser.add_argument('-r', '--rep', default=10, type=int, help='number of repetitions to run')
+	parser.add_argument('-w', '--workers', default=4, type=int, help='number of parallel workers to use')
+	parser.add_argument('-s', '--bs', default=40, type=int, help='batch size')
+	parser.add_argument('-c', '--bc', default=0, type=float, help='batch c')
+	parser.add_argument('-i', '--iter', default=50, type=int, help='maximum number of iterations to run')
+	parser.add_argument('--online', default=0, type=int, help='whether to perform online update')
+	parser.add_argument('-o', '--ordupdate', default=1, type=int, help='number of oridinal updates in each EM iter')
+	args = parser.parse_args()
+
+	main(NUM_STEPS=args.rep, max_workers=args.workers, 
+		batch_size=args.bs, batch_c=args.bc, max_iter=args.iter, online=args.online==1, num_ord_updates=args.ordupdate)
 
 
 # Results for reference
@@ -86,8 +99,8 @@ if __name__ == "__main__":
 # ord imputation SMAE: mean 0.731, std 0.015
 # bin imputation SMAE: mean 0.835, std 0.062
 #----------------------------------------------
-# Run command $ python standard_copula_generated.py 10 4 40 5 100
-# Minibatch run 2 passes (batch_c = 5, batch_size = 40, max_iter = 100)
+# Run command $ python standard_copula_generated.py --bs 40 --bc 5 --iter 100
+# Minibatch run 2 passes
 #----------------------------------------------
 # when cutoff_by is 'dist'
 # Runtime in seconds: mean 8.80, std 1.15
@@ -96,8 +109,8 @@ if __name__ == "__main__":
 # ord imputation SMAE: mean 0.795, std 0.025
 # bin imputation SMAE: mean 0.660, std 0.033
 #----------------------------------------------
-# Run command $ python standard_copula_generated.py 10 4 40 5 50
-# Minibatch run 1 passes (batch_c = 5, batch_size = 40, max_iter = 50)
+# Run command $ python standard_copula_generated.py --bs 40 --bc 5 --iter 50
+# Minibatch run 1 passes 
 #----------------------------------------------
 # when cutoff_by is 'dist'
 # Runtime in seconds: mean 4.64, std 0.07

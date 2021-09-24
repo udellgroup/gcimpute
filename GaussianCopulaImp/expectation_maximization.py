@@ -6,8 +6,26 @@ import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 import warnings
 from scipy.linalg import svdvals
+from collections import defaultdict
 
 class ExpectationMaximization():
+    '''
+    A method to fit a Gaussian copul model from incomplete data and then use the fitted model to impute the missing entries.
+
+    Attributes
+    ----------
+    cont_indices:
+    ord_indices: 
+    max_ord:
+    sigma : numpy array with shape (p, p)
+        the copula correlation matrix 
+
+    Methods
+    -------
+    impute_missing:
+    impute_missing_online:
+    '''
+
     def __init__(self, var_types=None, max_ord=20, sigma_init = None):
         '''
         The user can tell the model which variables are continuous and which are ordinal by the following two ways:
@@ -29,8 +47,7 @@ class ExpectationMaximization():
             assert svdvals(sigma_init).min() > 1e-7, message
         self.sigma = sigma_init
 
-    def impute_missing(
-                       self, X, threshold=0.01, max_iter=50, max_workers=1, num_ord_updates=1, 
+    def impute_missing(self, X, threshold=0.01, max_iter=50, max_workers=1, num_ord_updates=1, 
                        batch_size=100, batch_c=0, 
                        window_size=200, const_decay = -1, 
                        verbose=False, seed=1):
@@ -65,7 +82,7 @@ class ExpectationMaximization():
         X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
         sigma_rearranged = self.sigma[np.ix_(_order, _order)]
 
-        return X_imp, sigma_rearranged
+        return {'imputed_data':X_imp, 'copula_corr':sigma_rearranged}
 
 
     def _fit_covariance(self, X, threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, 
@@ -144,9 +161,15 @@ class ExpectationMaximization():
             print("Convergence not achieved at maximum iterations")
         return  Z_imp
     
-    def impute_missing_online(self, X, threshold=0.01, max_iter=50, max_workers=1, num_ord_updates=1, batch_size=100, batch_c=0, window_size=200, const_decay = -1, verbose=False, seed=1):
+    def impute_missing_online(self, X, 
+                              threshold=0.01, max_workers=1, num_ord_updates=1, 
+                              batch_size=100, batch_c=0, window_size=200, const_decay = -1, 
+                              verbose=False, seed=1, sigma_diff=['F']):
         """
-        Fits a Gaussian Copula and imputes missing values in X.
+        Fit the Gaussian copula model at each new batch of data points. If the provided X is not an iterable but a numpy array, 
+        an iterable will be constructed by sequentially iterating over X using the specified batch size. To take mutiple passes 
+        through the data, input the stacked data (by the number of passes) as X. However, it is recommended to use offline batch 
+        mode for that purpose.  
         Args:s
             X (matrix): data matrix with entries to be imputed
             cont_indices (array): logical, true at indices of the continuous entries
@@ -155,6 +178,7 @@ class ExpectationMaximization():
             max_iter (int): the maximum number of iterations for copula estimation
             max_workers: the maximum number of workers for parallelism
             max_ord: maximum number of levels in any ordinal for detection of ordinal indices
+            sigma_diff: A subset of ['F', 'S', 'N']. 'F' for Frobenius norm, 'S' for spectral norm and 'N' for nuclear norm. 
         Returns:
             X_imp (matrix): X with missing values imputed
             sigma_rearragned (matrix): an estimate of the covariance of the copula
@@ -165,6 +189,7 @@ class ExpectationMaximization():
         X_imp = np.zeros_like(X)
         if self.sigma is None:
             self.sigma = np.identity(p)
+        sigma_diff_output = defaultdict(list)
 
         i=0
         while True:
@@ -174,16 +199,19 @@ class ExpectationMaximization():
                 break 
             indices = np.arange(batch_lower, batch_upper, 1)
             decay_coef = const_decay if 0<const_decay<1 else batch_c/(i + 1 + batch_c)
-            X_imp[indices,:] = self.partial_fit_and_predict(X[indices,:], max_workers=max_workers, decay_coef=decay_coef, num_ord_updates=num_ord_updates)
+            out = self.partial_fit_and_predict(X[indices,:], max_workers=max_workers, decay_coef=decay_coef, num_ord_updates=num_ord_updates, sigma_diff=sigma_diff)
+            X_imp[indices,:] = out['imputed']
+            for k,v in out['sigma_diff'].items():
+                sigma_diff_output[k].append(v)
 
             i+=1
         _order = self.back_to_original_order()
         sigma_rearranged = self.sigma[np.ix_(_order, _order)]
-        return X_imp, sigma_rearranged
+        return {'imputed_data':X_imp, 'copula_corr':sigma_rearranged, 'copula_corr_change':sigma_diff_output}
 
     # TO DO: add a function attribute which takes estimated model and new point as input to return immediate imputaiton
     #  that would serve as out-of-sample prediction without updating the model parameter. Computation will be smaller but the complexity is still O(p^3)
-    def partial_fit_and_predict(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, sigma_update=True, marginal_update = True, seed = 1):
+    def partial_fit_and_predict(self, X_batch, max_workers=4, num_ord_updates=2, decay_coef=0.5, sigma_update=True, marginal_update = True, seed = 1, sigma_diff=None):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -212,8 +240,11 @@ class ExpectationMaximization():
         Z_cont = self.transform_function.partial_evaluate_cont_latent(X_batch) 
         Z = np.concatenate((Z_ord, Z_cont), axis=1)
         sigma, Z_imp, Z = self._em_step(Z, Z_ord_lower, Z_ord_upper, max_workers, num_ord_updates)
+        prev_sigma = self.sigma
         if sigma_update:
             self.sigma = sigma*decay_coef + (1-decay_coef)*self.sigma
+
+        diff = None if sigma_diff is None else self.get_matrix_diff(prev_sigma, self.sigma, sigma_diff)
 
         # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
         _order = self.back_to_original_order()
@@ -221,7 +252,7 @@ class ExpectationMaximization():
         X_imp = np.empty(Z_imp.shape)
         X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged, X_batch)
         X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged, X_batch)
-        return X_imp
+        return {'imputed':X_imp, 'sigma_diff':diff}
 
 
     def _em_step(self, Z, r_lower, r_upper, max_workers=1, num_ord_updates=1):
@@ -372,6 +403,35 @@ class ExpectationMaximization():
         p = len(orders)
         assert len(set(orders))==p and min(orders)==0 and max(orders)==p-1, 'Func back_to_original_order runs into bugs, please report'
         return orders
+
+
+    def get_matrix_diff(self, sigma_old, sigma_new, type = ['F', 'S', 'N']):
+        '''
+        Return the correlation change tracking statistics, as some matrix norm of normalized matrix difference.
+        Support three norms currently: 'F' for Frobenius norm, 'S' for spectral norm and 'N' for nuclear norm. 
+        User-defined norm can also be used through simple modification.
+        Args:
+            simga_old: the estimate of copula correlation matrix based on historical data
+            sigma_new: the estiamte of copula correlation matrix based on new batch data
+            type (a subset of {'F', 'S', 'N'}): the type of matrix norm to use for constructing test statistics. 
+        Returns:
+            test_stats: a dictionary with (matrix norm type, the test statistics) as (key, value) pair.
+        '''
+        p = sigma_old.shape[0]
+        u, s, vh = np.linalg.svd(sigma_old)
+        factor = (u * np.sqrt(1/s) ) @ vh
+        diff = factor @ sigma_new @ factor
+        test_stats = {}
+        if 'F' in type:
+            test_stats['F'] = np.linalg.norm(diff-np.identity(p))
+        if 'S' in type or 'N' in type:
+            _, s, _ = np.linalg.svd(diff)
+        if 'S' in type:
+            test_stats['S'] = max(abs(s-1))
+        if 'N' in type:
+            test_stats['N'] = np.sum(abs(s-1))
+        return test_stats
+
 
 
 
