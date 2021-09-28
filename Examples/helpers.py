@@ -56,17 +56,13 @@ def generate_sigma(seed, p=15):
     D_neg_half = np.diag(1.0/np.sqrt(D))
     return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
 
-def generate_LRGC(rank, sigma, n=500, p_seq=(100,100,100), ord_num=5, cont_type = 'LR', seed=1):
-    cont_indices = None
-    bin_indices = None
-    ord_indices = None
-    if p_seq[0] > 0:
-        cont_indices = range(p_seq[0])
-    if p_seq[1] > 0:
-        ord_indices = range(p_seq[0],p_seq[0] + p_seq[1])
-    if p_seq[2] > 0:
-        bin_indices = range(p_seq[0] + p_seq[1], p_seq[0] + p_seq[1] + p_seq[2])
-    p = np.sum(p_seq)
+def generate_LRGC(var_types, rank, sigma, n=500, ord_num=5, cont_transform=lambda x:x, seed=1, ordinalize_by='dist'):
+    cont_index = var_types['cont']
+    ord_index = var_types['ord']
+    bin_index = var_types['bin']
+    all_index = cont_index + ord_index + bin_index
+    p = len(all_index)
+
     np.random.seed(seed)
     W = np.random.normal(size=(p,rank))
     # TODO: check everything of this form with APPLY
@@ -74,15 +70,12 @@ def generate_LRGC(rank, sigma, n=500, p_seq=(100,100,100), ord_num=5, cont_type 
         W[i,:] = W[i,:]/np.sqrt(np.sum(np.square(W[i,:]))) * np.sqrt(1 - sigma)
     Z = np.dot(np.random.normal(size=(n,rank)), W.T) + np.random.normal(size=(n,p), scale=np.sqrt(sigma))
     X_true = Z
-    if cont_indices is not None:
-        if cont_type != 'LR':
-            X_true[:,cont_indices] = X_true[:,cont_indices]**3
-    if bin_indices is not None:
-        for bin_index in bin_indices:
-            X_true[:,bin_index] = continuous2ordinal(Z[:,bin_index], k=2)
-    if ord_indices is not None:
-        for ord_index in ord_indices:
-            X_true[:,ord_index] = continuous2ordinal(Z[:,ord_index], k=ord_num)
+    if len(cont_index)>0:
+        X_true[:,cont_index] = cont_transform(X_true[:,cont_index])
+    for ind in bin_index:
+        X_true[:,ind] = cont_to_ord(Z[:,ind], k=2, by=ordinalize_by)
+    for ind in ord_index:
+         X_true[:,ind] = cont_to_ord(Z[:,ind], k=ord_num, by=ordinalize_by)
     return X_true, W
 
 
@@ -136,7 +129,8 @@ def get_rmse(x_imp, x_true, x_obs = None, relative=False):
     #mse = np.mean(diff**2.0, axis=0)
     mse = np.mean(np.power(diff, 2))
     rmse = np.sqrt(mse)
-    return rmse if not relative else rmse/np.sqrt(np.mean(np.power(x_true[loc],2)))
+    return rmse/np.sqrt(np.mean(np.power(x_true[loc],2))) if relative else rmse
+
         
 
 def get_smae(x_imp, x_true, x_obs, 
@@ -246,7 +240,7 @@ def mask(X, mask_fraction, seed=0, verbose=False):
     total_observed = len(obs_indices)
     while not complete:
         np.random.seed(seed)
-        if (verbose): print(seed)
+        if verbose: print(seed)
         mask_indices = obs_indices[np.random.choice(len(obs_indices), size=int(mask_fraction*total_observed), replace=False)]
         for i,j in mask_indices:
             X_masked[i,j] = np.nan

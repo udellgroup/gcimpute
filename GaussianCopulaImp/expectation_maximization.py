@@ -14,16 +14,21 @@ class ExpectationMaximization():
 
     Attributes
     ----------
-    cont_indices:
-    ord_indices: 
-    max_ord:
-    sigma : numpy array with shape (p, p)
-        the copula correlation matrix 
+    cont_indices: list 
+        list of Boolean variables of length p (the number of variables), indicating locations of continuous variables.
+    ord_indices: list
+        list of Boolean variables of length p, indicating locations of ordinal variables (including binary variables). 
+    max_ord: int
+        int. When cont_indices and ord_indices are not specified, variables whose numbers of unique values are regarded as continuous variables and others as ordinal variables.
+    sigma: numpy array
+        numpy array of shape (p, p), the copula correlation matrix. 
 
     Methods
     -------
     impute_missing:
+        fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
     impute_missing_online:
+        At each sequentially observed data batch, fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
     '''
 
     def __init__(self, var_types=None, max_ord=20, sigma_init = None):
@@ -32,6 +37,11 @@ class ExpectationMaximization():
         (1) input a dict var_types that contains valid assignmetns of cont_indices and ord_indices;
         (2) input a max_ord so that the variables whose number of unique observation below max_ord will be treated as ordinal variables.
         If both are provided, only var_types will be used.
+
+        Args:
+            var_types: dict
+            max_ord: int
+            sigma_init: None or numpy array
         '''
         if var_types is not None:
             if not all(var_types['cont'] ^ var_types['ord']):
@@ -78,14 +88,17 @@ class ExpectationMaximization():
         # Rearrange Z_imp so that it's columns correspond to the columns of X
         Z_imp_rearranged = Z_imp[:,_order]
         X_imp = np.empty(X.shape)
-        X_imp[:,self.cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
-        X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
+        if np.sum(self.cont_indices) > 0:
+            X_imp[:,self.cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
+        if np.sum(self.ord_indices) >0:
+            X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
         sigma_rearranged = self.sigma[np.ix_(_order, _order)]
 
         return {'imputed_data':X_imp, 'copula_corr':sigma_rearranged}
 
 
-    def _fit_covariance(self, X, threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, 
+    def _fit_covariance(self, X, 
+                        threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, 
                         batch_size=100, batch_c=0, 
                         verbose=False, seed=1):
         """

@@ -1,15 +1,23 @@
-from transforms.transform_function import TransformFunction
-from em.expectation_maximization import ExpectationMaximization
+from .transform_function import TransformFunction
+from .expectation_maximization import ExpectationMaximization
 from scipy.stats import norm, truncnorm
 import numpy as np
-from concurrent.futures import ProcessPoolExecutor
 
 
 class LowRankExpectationMaximization(ExpectationMaximization):
-    def __init__(self):
-        return
+    def __init__(self, var_types=None, max_ord=20):
+        if var_types is not None:
+            if not all(var_types['cont'] ^ var_types['ord']):
+                raise ValueError('Inconcistent specification of variable types indexing')
+            self.cont_indices = var_types['cont']
+            self.ord_indices = var_types['ord']
+        else:
+            self.cont_indices = None
+            self.ord_indices = None
+        self.max_ord = max_ord
 
-    def impute_missing(self, X, rank, cont_indices=None, ord_indices=None, threshold=1e-3, max_iter=50, max_workers=None, max_ord=20, verbose = False):
+
+    def impute_missing(self, X, rank, threshold=1e-3, max_iter=50, max_ord=20, verbose = False, seed=1):
         """
         Fits a low rank Gaussian Copula and imputes missing values in X. After estimating the model parameters W and sigma, 
         a further step to update S (detemined by W, sigma, Z) is implemented for numerical stability
@@ -20,7 +28,6 @@ class LowRankExpectationMaximization(ExpectationMaximization):
             ord_indices (array): indices of the ordinal entries
             threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
             max_iter (int): the maximum number of iterations for copula estimation
-            max_workers: the maximum number of workers for parallelism
             max_ord: maximum number of levels in any ordinal for detection of ordinal indices
             verbose: print iteration information if true
         Returns:
@@ -28,27 +35,33 @@ class LowRankExpectationMaximization(ExpectationMaximization):
             W (matrix): an estimate of the latent coefficient matrix of the low rank Gaussian copula
             sigma (scalar): an estimate of the latent noise variance of the low rank Gaussian copula
         """
-        if cont_indices is None and ord_indices is None:
-            # guess the indices from the data
-            cont_indices = self.get_cont_indices(X, max_ord)
-            ord_indices = ~cont_indices
-        self.transform_function = TransformFunction(X, cont_indices, ord_indices)
-        W, sigma, Z, C, loglik = self._fit_covariance(X, rank, cont_indices, ord_indices, threshold, max_iter, max_workers, verbose)
+        if self.cont_indices is None:
+            self.cont_indices = self.get_cont_indices(X, self.max_ord)
+            self.ord_indices = ~self.cont_indices
+
+        self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
+        # TO DO: consider the order of W
+        W, sigma, Z, C, loglik = self._fit_covariance(X=X, rank=rank, threshold=threshold, max_iter=max_iter, verbose=verbose, seed=seed)
         S = self._comp_S(Z, W, sigma) # re-estimate S to ensure numerical stability
         Z_imp = self._impute(Z, S, W)
         # Rearrange Z_imp so that it's columns correspond to the columns of X
-        Z_imp_rearranged = np.empty(X.shape)
-        Z_imp_rearranged[:,ord_indices] = Z_imp[:,:np.sum(ord_indices)]
-        Z_imp_rearranged[:,cont_indices] = Z_imp[:,np.sum(ord_indices):]
+        #Z_imp_rearranged = np.empty(X.shape)
+        #Z_imp_rearranged[:,ord_indices] = Z_imp[:,:np.sum(ord_indices)]
+        #Z_imp_rearranged[:,cont_indices] = Z_imp[:,np.sum(ord_indices):]
+        _order = self.back_to_original_order()
+        Z_imp_rearranged = Z_imp[:,_order]
 
         X_imp = np.empty(X.shape)
-        if np.sum(cont_indices) > 0:
-            X_imp[:,cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
-        if np.sum(ord_indices) >0:
-            X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
+        if np.sum(self.cont_indices) > 0:
+            #X_imp[:,cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
+            X_imp[:,self.cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
+        if np.sum(self.ord_indices) >0:
+            #X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
+            X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
+
         return X_imp, W, sigma
 
-    def _fit_covariance(self, X, rank, cont_indices, ord_indices, threshold=1e-3, max_iter =100, max_workers = 5, verbose = False):
+    def _fit_covariance(self, X, rank, threshold=1e-3, max_iter =100, verbose = False, seed=1):
         """
         Estimate the covariance parameters of the low rank Gaussian copula, W and sigma, 
         using the data in X and return the estimates and related quantity. 
@@ -57,11 +70,8 @@ class LowRankExpectationMaximization(ExpectationMaximization):
         Args:
             X (matrix): data matrix with entries to be imputed
             rank: the rank for low rank Gaussian copula 
-            cont_indices (array): indices of the continuous entries
-            ord_indices (array): indices of the ordinal entries
             threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
             max_iter (int): the maximum number of iterations for copula estimation
-            max_workers (positive int): the maximum number of workers for parallelism 
             verbose: print iteration information if true
         Returns:
             W (matrix): an estimate of the latent coefficient matrix of the low rank Gaussian copula
@@ -70,9 +80,8 @@ class LowRankExpectationMaximization(ExpectationMaximization):
             C (matrix): 0 at observed continuous entry; the conditional variance, at observed ordinal entry; NA elsewhere
             loglik: log likelihood during iterations, expected to increase every iteration, but possible that it does not (indicating bad fit)
         """
-        assert cont_indices is not None or ord_indices is not None
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, seed)
         Z_cont = self.transform_function.get_cont_latent()
         Z = np.concatenate((Z_ord, Z_cont), axis=1)
 
@@ -85,8 +94,8 @@ class LowRankExpectationMaximization(ExpectationMaximization):
         W = u[:,:rank] * (np.sqrt(d[:rank] - sigma))
         W, sigma = self._scale_corr(W, sigma)
         # Update entries at obseved ordinal locations from SVD initialization
-        if sum(ord_indices)>0:
-            Z_ord[~np.isnan(Z_ord)] = Z_imp[:,:sum(ord_indices)][~np.isnan(Z_ord)]
+        if sum(self.ord_indices)>0:
+            Z_ord[~np.isnan(Z_ord)] = Z_imp[:,:sum(self.ord_indices)][~np.isnan(Z_ord)]
             Z = np.concatenate((Z_ord, Z_cont), axis=1)
         
 
@@ -160,7 +169,7 @@ class LowRankExpectationMaximization(ExpectationMaximization):
 
 
 
-    def _em_step(self, Z, r_lower, r_upper, W, sigma, max_workers=5):
+    def _em_step(self, Z, r_lower, r_upper, W, sigma):
         """
         EM algorithm to estimate the low rank Gaussian copula, W and sigma.
         Args:
@@ -168,7 +177,6 @@ class LowRankExpectationMaximization(ExpectationMaximization):
                         initial conditional mean, at observed ordinal entry (will be updated during iteration); NA elsewhere
             r_lower, r_upper (matrix): the lower and upper bounds for con
             W, sigma: initial estimate for low rank Gaussian copula parameters
-            max_workers (positive int): the maximum number of workers for parallelism 
         Returns:
             W (matrix): an estimate of the latent coefficient matrix of the low rank Gaussian copula
             sigma (scalar): an estimate of the latent noise variance of the low rank Gaussian copula
