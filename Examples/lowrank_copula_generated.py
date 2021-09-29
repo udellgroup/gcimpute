@@ -11,7 +11,11 @@ from collections import defaultdict
 def run_onerep(setting, seed=1, 
                n=500, p=200, rank=10, noise_ratio=0.1, mask_ratio=0.4,
                threshold=0.01, max_iter=50, 
-               ordinalize_by='dist', ord_num=5):
+               ordinalize_by='quantile', ord_num=5):
+    '''
+    To be consistent with the experimental setting in the paper "Matrix Completion with Quantified Uncertainty through Low Rank Gaussian Copula", 
+    we use ordinalized_by = 'quantile'. Setting ordinalized_by = 'dist' will yield an easier setting, since smaller MAE can be achieved.
+    '''
     var_types = {'cont':[], 'ord':[], 'bin':[]}
     if setting == 'LR-cont':
         cont_transform = lambda x:x
@@ -21,7 +25,8 @@ def run_onerep(setting, seed=1,
         var_types['cont'] = list(range(p))
     else:
         cont_transform = None
-        var_types[setting] = list(range(p))
+        var_t = 'ord' if  'ord' in setting else 'bin'
+        var_types[var_t] = list(range(p))
 
     Xtrue, Wtrue = generate_LRGC(var_types=var_types, 
                                  rank=rank, sigma=noise_ratio, n=n, 
@@ -30,7 +35,7 @@ def run_onerep(setting, seed=1,
                                  ordinalize_by=ordinalize_by, ord_num=ord_num)
 
     np.random.seed(seed)
-    X_masked, mask_indices, _ = mask(Xtrue, mask_ratio)
+    X_masked, mask_indices, _ = mask(Xtrue, mask_fraction = mask_ratio, seed=seed)
 
     start_time = time.time()
     LREM = LowRankExpectationMaximization()
@@ -135,5 +140,11 @@ if __name__ == "__main__":
 # -------------------------------------
 # 1-5 ORDINAL DATA
 # -------------------------------------
-
+# The obtained imputation error is much smaller than the recorded numbers in the paper "Matrix Completion with Quantified Uncertainty through Low Rank Gaussian Copula".
+# The reason may still be how the cutoffs for ordinal variables are generated. 
+#
+# Runtime in seconds: mean 99.65, std 3.66
+# Grassman distance of the subspace: mean 0.256, std 0.099
+# Estimated subspace noise ratio (true value 0.1): mean 0.126, std 0.002
+# Imputation error in MAE: mean 0.291, std 0.005
 

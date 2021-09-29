@@ -17,9 +17,11 @@ def _cont_to_ord(x, k, by = 'dist', seed=1):
         # samping cutoffs from 5% quantile to 95% quantile 
         select = (x>np.quantile(x, 0.05)) & (x<np.quantile(x, 0.95))
         cutoffs = np.random.choice(x[select], k-1, replace = False)
+        #cutoffs = np.append(cutoffs, np.max(x)+1e-3)
     elif by == 'sampling':
         # sampling from standard normal, does not depend on the input data
         cutoffs = np.random.normal(k-1)
+        #cutoffs = np.append(cutoffs, np.max(x)+1e-3)
     else:
         raise ValueError('Unsupported cutoff_by option')
     # TODO:
@@ -233,27 +235,28 @@ def mask(X, mask_fraction, seed=0, verbose=False):
     """
     Masks mask_fraction entries of X, raising a value error if an entire row is masked
     """
-    complete = False
     count = 0
     X_masked = np.copy(X) 
     obs_indices = np.argwhere(~np.isnan(X))
     total_observed = len(obs_indices)
-    while not complete:
+    p = X.shape[1]
+
+    while True:
         np.random.seed(seed)
-        if verbose: print(seed)
+        if verbose: 
+            print(seed)
         mask_indices = obs_indices[np.random.choice(len(obs_indices), size=int(mask_fraction*total_observed), replace=False)]
         for i,j in mask_indices:
             X_masked[i,j] = np.nan
-        complete = True
-        for row in X_masked:
-            if len(row[~np.isnan(row)]) == 0:
-                seed += 1
-                count += 1
-                complete = False
-                X_masked = np.copy(X)
-                break
+        # the masking is acceptable if there is no empty row
+        if np.isnan(X_masked).sum(axis=1).max() < p:
+            break
+        else:
+            seed += 1
+            count += 1
+            X_masked = np.copy(X)
         if count == 50:
-            raise ValueError("Failure in Masking data without empty rows")
+            raise ValueError("Failure in masking data without empty rows")
     return X_masked, mask_indices, seed
 
 def mask_per_row(X, seed=0, size=None, ratio=None):
