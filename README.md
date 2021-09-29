@@ -9,11 +9,24 @@ The easiest way is to install using pip: `pip install GaussianCopulaImp`
 
 There are two different models available for use: the standard Gaussian copula model and the low rank Gaussian copula model. When working with skinny datasets (small p), the standard Gaussian copula model is preferred. In contrast, the low rank Gaussian copula model is recommended when working with wide datasets (large p). 
 
-There are three training options for the standard Gaussian copula model: standard offline training, mini-batch offline training and mini-batch online training. In short, mini-batch offline training is often much faster than standard offline training, by using more frequent model updates. Online training is designed for the streaming data scenario when data comes  at different time points. Parallelism is now supported for all training options with the standard Gaussian copula model. 
+There are three training options for the standard Gaussian copula model: standard offline training, mini-batch offline training and mini-batch online training. In short, mini-batch offline training is often much faster than the standard offline training, by using more frequent model updates. Online training is designed for the streaming data scenario when data comes  at different time points or the data distribution is changing over time. Parallelism is now supported for all training options with the standard Gaussian copula model for further acceleration. 
 
-For low rank Gaussian copula model, only standard offline training without parallelism is supported at this moment. Parallelism will be supported soon. The development of mini-batch training (both offline and online) are nontrivial. Please contact the authors if you are interested in collaboration for developing those functionalities.
+For low rank Gaussian copula model, only standard offline training without parallelism is supported at this moment. Parallelism will be supported soon. The development of mini-batch training (both offline and online) is nontrivial. Please contact the authors if you are interested in collaboration for developing those functionalities.
 
 Please also see below for more detailed dicussions on how to select the model and training option that works best for your purpose.
+
+## Select the right model to use
+Both the standard Gaussian copula model (GC for short) and the low rank Gaussian copula model (LRGC for short) estimate a copula correlation matrix of size p by p for p variables. The difference is that LRGC imposes a low rank structure on the latent correlation matrix such that the number of free parameters is O(pk), with a specified low rank k. In contrast, GC has O(p^2) free parameters.
+
+GC is recommended in the classical setting where the number of samples is much larger than the number of variabels, i.e. n>>p. 
+For high-dimensional setting (p>n or large p), LRGC is recommended because (1) the estimated copula correlation matrix will be singular when p>n; (2) the O(np^3) time complexity of GC may be too expensive for large p, while LRGC only has O(npk^2) time complexity with a small specified rank k.
+
+Most of our experiments have at least around 200 samples points (n>200). There may be some problematic behavior when n is very small, since the copula marginal estimation accuracy depends on n. Please report any bugs you encounter!
+
+## Select the right training option
+The standard offline training is an approximate EM algorithm, the simplest one to use. Mini-batch offline training is an online EM algorithm, which can greatly accelerate the training. Mini-batch online training differs with mini-batch offline training only in how many data points they remember. The offline version remebers all the data to improve the copula marginal estimation accuracy, while the online version only remembers recent data in a lookback window (length determined by the user).
+
+When the computation time is the only consideration, mini-batch offline training is prefered. However, there are situations that remembering all data points is either impossible or undesirable. For example, when the data comes at different times and a model is required at each arrival time, future data is unavailable and remembering all data is thus impossible. Also, when the data distribution changes over time, remebering all data points includes much noise in historical data that no longer helps explaining current data and thus undesirable. For these situations, mini-batch online training should be used.
 
 ## Examples 
 ```
