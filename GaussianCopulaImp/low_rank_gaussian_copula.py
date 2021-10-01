@@ -1,10 +1,10 @@
 from .transform_function import TransformFunction
-from .expectation_maximization import ExpectationMaximization
+from .gaussian_copula import GaussianCopula
 from scipy.stats import norm, truncnorm
 import numpy as np
 
 
-class LowRankExpectationMaximization(ExpectationMaximization):
+class LowRankGaussianCopula(GaussianCopula):
     def __init__(self, var_types=None, max_ord=20):
         if var_types is not None:
             if not all(var_types['cont'] ^ var_types['ord']):

@@ -8,7 +8,7 @@ import warnings
 from scipy.linalg import svdvals
 from collections import defaultdict
 
-class ExpectationMaximization():
+class GaussianCopula():
     '''
     A method to fit a Gaussian copul model from incomplete data and then use the fitted model to impute the missing entries.
 
@@ -41,7 +41,11 @@ class ExpectationMaximization():
         Args:
             var_types: dict
             max_ord: int
+                When var_types is None, max_ord is used to automatically determine continuous variables and ordinal variables: variables 
+                whose number of observed unqiue values is larger than max_ord are regarded as continuous variables and others are regarded 
+                as ordinal variabels.
             sigma_init: None or numpy array
+                The intial value of the copula correlation matrix.
         '''
         if var_types is not None:
             if not all(var_types['cont'] ^ var_types['ord']):
@@ -57,25 +61,43 @@ class ExpectationMaximization():
             assert svdvals(sigma_init).min() > 1e-7, message
         self.sigma = sigma_init
 
-    def impute_missing(self, X, threshold=0.01, max_iter=50, max_workers=1, num_ord_updates=1, 
+    def impute_missing(self, X, threshold=0.01, max_iter=50, max_workers=1,
                        batch_size=100, batch_c=0, 
-                       window_size=200, const_decay = -1, 
-                       verbose=False, seed=1):
+                       verbose=False, seed=1,  num_ord_updates=1):
         """
-        Fits a Gaussian Copula and imputes missing values in X.
+        Fits a Gaussian Copula from incomplete data X and imputes the missing entries in X using the fitted model.
 
         Args:
-            X (matrix): data matrix with entries to be imputed
-            cont_indices (array): logical, true at indices of the continuous entries
-            ord_indices (array): logical, true at indices of the ordinal entries
-            threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
-            max_iter (int): the maximum number of iterations for copula estimation
-            max_workers: the maximum number of workers for parallelism
-            max_ord: maximum number of levels in any ordinal for detection of ordinal indices
+            X: numpy array of shape (n,p)
+                Incomplete data observation whose missing entries are needed to be imputed. One can also learn the Gaussian copula 
+                model from complete data X.
+            threshold: float
+                the threshold for scaled difference between correlation estimates to terminate the model fitting.
+            max_iter: int
+                the maximum number of EM iterations to run 
+            max_workers: int
+                the maximum number of workers for parallelism
+            batch_size: int
+                the number of data points in each mini-batch. Only used for offline mini-batch training.
+            batch_c: float (nonnegtive) 
+                Must be nonnegative. When batch_c=0, the standard EM training is implemented. When batch_c>0,
+                the mini-batch EM is implemented, with learning rate c/(k+c) at the k-th step.
+            verbose: Boolean
+                Print the (pseudo)-likelihood value and copula correlation update ratio at each iteration
+            seed: int
+                Controls the randomness in generating latent ordinal values.
+            num_ord_updates: int
+                Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
+                We do not recommend using value larger than 1 (the default value) at this moment. It will slow the speed without clear 
+                performance improvement.
         Returns:
-            X_imp (matrix): X with missing values imputed
-            sigma_rearragned (matrix): an estimate of the covariance of the copula
+            Dict
+                imputed_data: numpy array of shape (n,p)
+                    the imputed version of the input data X.
+                copula_corr: numpy array of shape (p,p)
+                    the estimated copula correlation matrix.
         """
+        assert batch_c>=0, 'batch_c must be nonnegative'
         if self.cont_indices is None:
             self.cont_indices = self.get_cont_indices(X, self.max_ord)
             self.ord_indices = ~self.cont_indices
@@ -95,6 +117,54 @@ class ExpectationMaximization():
         sigma_rearranged = self.sigma[np.ix_(_order, _order)]
 
         return {'imputed_data':X_imp, 'copula_corr':sigma_rearranged}
+
+    def impute_missing_online(self, X, 
+                              threshold=0.01, max_workers=1, num_ord_updates=1, 
+                              batch_size=100, batch_c=0, window_size=200, const_decay = -1, 
+                              verbose=False, seed=1, sigma_diff=['F']):
+        """
+        Fit the Gaussian copula model at each new batch of data points. If the provided X is not an iterable but a numpy array, 
+        an iterable will be constructed by sequentially iterating over X using the specified batch size. To take mutiple passes 
+        through the data, input the stacked data (by the number of passes) as X. However, it is recommended to use offline batch 
+        mode for that purpose.  
+        Args:s
+            X (matrix): data matrix with entries to be imputed
+            cont_indices (array): logical, true at indices of the continuous entries
+            ord_indices (array): logical, true at indices of the ordinal entries
+            threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
+            max_iter (int): the maximum number of iterations for copula estimation
+            max_workers: the maximum number of workers for parallelism
+            max_ord: maximum number of levels in any ordinal for detection of ordinal indices
+            sigma_diff: A subset of ['F', 'S', 'N']. 'F' for Frobenius norm, 'S' for spectral norm and 'N' for nuclear norm. 
+        Returns:
+            X_imp (matrix): X with missing values imputed
+            sigma_rearragned (matrix): an estimate of the covariance of the copula
+        """
+        assert self.cont_indices is not None and self.ord_indices is not None, 'Variable types must be provided for online fit'
+        self.transform_function = OnlineTransformFunction(self.cont_indices, self.ord_indices, window_size=window_size)
+        n,p = X.shape
+        X_imp = np.zeros_like(X)
+        if self.sigma is None:
+            self.sigma = np.identity(p)
+        sigma_diff_output = defaultdict(list)
+
+        i=0
+        while True:
+            batch_lower= i*batch_size
+            batch_upper=min((i+1)*batch_size, n)
+            if batch_lower>= n:
+                break 
+            indices = np.arange(batch_lower, batch_upper, 1)
+            decay_coef = const_decay if 0<const_decay<1 else batch_c/(i + 1 + batch_c)
+            out = self.partial_fit_and_predict(X[indices,:], max_workers=max_workers, decay_coef=decay_coef, num_ord_updates=num_ord_updates, sigma_diff=sigma_diff)
+            X_imp[indices,:] = out['imputed']
+            for k,v in out['sigma_diff'].items():
+                sigma_diff_output[k].append(v)
+
+            i+=1
+        _order = self.back_to_original_order()
+        sigma_rearranged = self.sigma[np.ix_(_order, _order)]
+        return {'imputed_data':X_imp, 'copula_corr':sigma_rearranged, 'copula_corr_change':sigma_diff_output}
 
 
     def _fit_covariance(self, X, 
@@ -174,53 +244,7 @@ class ExpectationMaximization():
             print("Convergence not achieved at maximum iterations")
         return  Z_imp
     
-    def impute_missing_online(self, X, 
-                              threshold=0.01, max_workers=1, num_ord_updates=1, 
-                              batch_size=100, batch_c=0, window_size=200, const_decay = -1, 
-                              verbose=False, seed=1, sigma_diff=['F']):
-        """
-        Fit the Gaussian copula model at each new batch of data points. If the provided X is not an iterable but a numpy array, 
-        an iterable will be constructed by sequentially iterating over X using the specified batch size. To take mutiple passes 
-        through the data, input the stacked data (by the number of passes) as X. However, it is recommended to use offline batch 
-        mode for that purpose.  
-        Args:s
-            X (matrix): data matrix with entries to be imputed
-            cont_indices (array): logical, true at indices of the continuous entries
-            ord_indices (array): logical, true at indices of the ordinal entries
-            threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
-            max_iter (int): the maximum number of iterations for copula estimation
-            max_workers: the maximum number of workers for parallelism
-            max_ord: maximum number of levels in any ordinal for detection of ordinal indices
-            sigma_diff: A subset of ['F', 'S', 'N']. 'F' for Frobenius norm, 'S' for spectral norm and 'N' for nuclear norm. 
-        Returns:
-            X_imp (matrix): X with missing values imputed
-            sigma_rearragned (matrix): an estimate of the covariance of the copula
-        """
-        assert self.cont_indices is not None and self.ord_indices is not None, 'Variable types must be provided for online fit'
-        self.transform_function = OnlineTransformFunction(self.cont_indices, self.ord_indices, window_size=window_size)
-        n,p = X.shape
-        X_imp = np.zeros_like(X)
-        if self.sigma is None:
-            self.sigma = np.identity(p)
-        sigma_diff_output = defaultdict(list)
 
-        i=0
-        while True:
-            batch_lower= i*batch_size
-            batch_upper=min((i+1)*batch_size, n)
-            if batch_lower>= n:
-                break 
-            indices = np.arange(batch_lower, batch_upper, 1)
-            decay_coef = const_decay if 0<const_decay<1 else batch_c/(i + 1 + batch_c)
-            out = self.partial_fit_and_predict(X[indices,:], max_workers=max_workers, decay_coef=decay_coef, num_ord_updates=num_ord_updates, sigma_diff=sigma_diff)
-            X_imp[indices,:] = out['imputed']
-            for k,v in out['sigma_diff'].items():
-                sigma_diff_output[k].append(v)
-
-            i+=1
-        _order = self.back_to_original_order()
-        sigma_rearranged = self.sigma[np.ix_(_order, _order)]
-        return {'imputed_data':X_imp, 'copula_corr':sigma_rearranged, 'copula_corr_change':sigma_diff_output}
 
     # TO DO: add a function attribute which takes estimated model and new point as input to return immediate imputaiton
     #  that would serve as out-of-sample prediction without updating the model parameter. Computation will be smaller but the complexity is still O(p^3)

@@ -1,6 +1,4 @@
-
-
-from GaussianCopulaImp.low_rank_expectation_maximization import LowRankExpectationMaximization
+from GaussianCopulaImp.low_rank_gaussian_copula import LowRankGaussianCopula
 from helpers import generate_LRGC, grassman_dist, mask, get_rmse
 import numpy as np
 import time
@@ -38,8 +36,8 @@ def run_onerep(setting, seed=1,
     X_masked, mask_indices, _ = mask(Xtrue, mask_fraction = mask_ratio, seed=seed)
 
     start_time = time.time()
-    LREM = LowRankExpectationMaximization()
-    X_imp, W, sigma_est = LREM.impute_missing(X=X_masked, rank=rank, threshold=threshold, max_iter=max_iter, seed=seed)
+    LRGC = LowRankGaussianCopula()
+    X_imp, W, sigma_est = LRGC.impute_missing(X=X_masked, rank=rank, threshold=threshold, max_iter=max_iter, seed=seed)
     end_time = time.time()
 
     if setting in ['ord', 'bin']:

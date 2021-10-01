@@ -1,4 +1,4 @@
-from GaussianCopulaImp.expectation_maximization import ExpectationMaximization
+from GaussianCopulaImp.gaussian_copula import GaussianCopula
 from helpers import generate_sigma, generate_mixed_from_gc, mask_types, get_smae, get_scaled_error, get_smae_batch
 import numpy as np
 import pandas as pd
@@ -24,15 +24,15 @@ def run_onerep(seed=1, n=2000,
 	cont_indices = np.zeros(p)
 	cont_indices[var_types['cont']] = 1
 	var_types_input = {'cont':cont_indices==1, 'ord':cont_indices==0}
-	em = ExpectationMaximization(var_types = var_types_input)
-	out = em.impute_missing_online(X=X_masked, 
+	gc = GaussianCopula(var_types = var_types_input)
+	out = gc.impute_missing_online(X=X_masked, 
 		                           batch_size=batch_size, const_decay = const_decay,
 		                           num_ord_updates=num_ord_updates,threshold=threshold, max_workers=max_workers)
 	X_imp_online, copula_corr_change = out['imputed_data'], out['copula_corr_change']
 
 	# offline model fitting
-	em = ExpectationMaximization()
-	out = em.impute_missing(X=X_masked, 
+	gc = GaussianCopula()
+	out = gc.impute_missing(X=X_masked, 
 		    			    max_iter=max_iter,batch_size=batch_size, batch_c=batch_c, 
 		                    num_ord_updates=num_ord_updates, threshold=threshold, max_workers=max_workers)
 	X_imp_offline = out['imputed_data']
