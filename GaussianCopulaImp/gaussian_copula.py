@@ -72,7 +72,7 @@ class GaussianCopula():
                 Incomplete data observation whose missing entries are needed to be imputed. One can also learn the Gaussian copula 
                 model from complete data X.
             threshold: float
-                the threshold for scaled difference between correlation estimates to terminate the model fitting.
+                the threshold for scaled difference between model parameters to terminate the model fitting.
             max_iter: int
                 the maximum number of EM iterations to run 
             max_workers: int

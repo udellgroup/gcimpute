@@ -1,5 +1,7 @@
 from GaussianCopulaImp.low_rank_gaussian_copula import LowRankGaussianCopula
-from helpers import generate_LRGC, grassman_dist, mask, get_rmse
+from GaussianCopulaImp.helper_data_generation import generate_LRGC
+from GaussianCopulaImp.helper_evaluation import get_rmse, get_mae, grassman_dist
+from GaussianCopulaImp.helper_mask import mask
 import numpy as np
 import time
 from tqdm import tqdm
@@ -33,11 +35,12 @@ def run_onerep(setting, seed=1,
                                  ordinalize_by=ordinalize_by, ord_num=ord_num)
 
     np.random.seed(seed)
-    X_masked, mask_indices, _ = mask(Xtrue, mask_fraction = mask_ratio, seed=seed)
+    X_masked = mask(Xtrue, mask_fraction = mask_ratio, seed=seed)
 
     start_time = time.time()
     LRGC = LowRankGaussianCopula()
-    X_imp, W, sigma_est = LRGC.impute_missing(X=X_masked, rank=rank, threshold=threshold, max_iter=max_iter, seed=seed)
+    out = LRGC.impute_missing(X=X_masked, rank=rank, threshold=threshold, max_iter=max_iter, seed=seed)
+    X_imp, W, sigma_est = out['imputed_data'], out['copula_factor_loading'], out['copula_noise_ratio']
     end_time = time.time()
 
     if setting in ['ord', 'bin']:

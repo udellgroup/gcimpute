@@ -1,5 +1,7 @@
 from GaussianCopulaImp.gaussian_copula import GaussianCopula
-from helpers import generate_sigma, generate_mixed_from_gc, mask_types, get_smae, get_scaled_error
+from GaussianCopulaImp.helper_data_generation import generate_sigma, generate_mixed_from_gc
+from GaussianCopulaImp.helper_evaluation import get_smae, get_scaled_error
+from GaussianCopulaImp.helper_mask import mask_types
 import numpy as np
 import pandas as pd
 import time

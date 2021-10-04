@@ -5,35 +5,72 @@ import numpy as np
 
 
 class LowRankGaussianCopula(GaussianCopula):
+    '''
+    A method to fit a low rank Gaussian copul model from incomplete data and then use the fitted model to impute the missing entries.
+    The low rank Gaussian copula model means the fitted copula correlation matrix admits decomposition sigma*I+A*t(A), 
+    where A has shape (p,rank) with rank<p. 
+
+    Attributes
+    ----------
+    cont_indices: list 
+        list of Boolean variables of length p (the number of variables), indicating locations of continuous variables.
+    ord_indices: list
+        list of Boolean variables of length p, indicating locations of ordinal variables (including binary variables). 
+    max_ord: int
+        int. When cont_indices and ord_indices are not specified, variables whose numbers of unique values are regarded as continuous variables and others as ordinal variables.
+    sigma: numpy array
+        numpy array of shape (p, p), the copula correlation matrix. 
+
+    Methods
+    -------
+    impute_missing:
+        fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
+    impute_missing_online:
+        At each sequentially observed data batch, fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
+    '''
     def __init__(self, var_types=None, max_ord=20):
-        if var_types is not None:
-            if not all(var_types['cont'] ^ var_types['ord']):
-                raise ValueError('Inconcistent specification of variable types indexing')
-            self.cont_indices = var_types['cont']
-            self.ord_indices = var_types['ord']
-        else:
-            self.cont_indices = None
-            self.ord_indices = None
-        self.max_ord = max_ord
+        '''
+        The user can tell the model which variables are continuous and which are ordinal by the following two ways:
+        (1) input a dict var_types that contains valid assignmetns of cont_indices and ord_indices;
+        (2) input a max_ord so that the variables whose number of unique observation below max_ord will be treated as ordinal variables.
+        If both are provided, only var_types will be used.
+
+        Args:
+            var_types: dict
+            max_ord: int
+                When var_types is None, max_ord is used to automatically determine continuous variables and ordinal variables: variables 
+                whose number of observed unqiue values is larger than max_ord are regarded as continuous variables and others are regarded 
+                as ordinal variabels.
+        '''
+        super().__init__(var_types=var_types, max_ord=max_ord)
 
 
     def impute_missing(self, X, rank, threshold=1e-3, max_iter=50, max_ord=20, verbose = False, seed=1):
         """
-        Fits a low rank Gaussian Copula and imputes missing values in X. After estimating the model parameters W and sigma, 
-        a further step to update S (detemined by W, sigma, Z) is implemented for numerical stability
+        Fits a low rank Gaussian Copula from incomplete data X and imputes the missing entries in X using the fitted model. 
+        The copula correlation matrix admits decomposition Sigma=sigma*I+A*t(A) where A has shape (p,rank) with rank<p. 
+        After estimating the model parameters W and sigma, a further step to update S (detemined by W, sigma, Z) is implemented 
+        for numerical stability.
         Args:
-            X (matrix): data matrix with entries to be imputed
-            rank: the rank for low rank Gaussian copula 
-            cont_indices (array): indices of the continuous entries
-            ord_indices (array): indices of the ordinal entries
-            threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
-            max_iter (int): the maximum number of iterations for copula estimation
-            max_ord: maximum number of levels in any ordinal for detection of ordinal indices
-            verbose: print iteration information if true
+            X: numpy array of shape (n,p)
+                Incomplete data observation whose missing entries are needed to be imputed. One can also learn the Gaussian copula 
+                model from complete data X.
+            rank: int
+                 the number of latent factors
+            threshold: float
+                the threshold for scaled difference between model parameters to terminate the model fitting
+            max_iter: int
+                the maximum number of EM iterations to run 
+            verbose: Boolean
+                Print the (pseudo)-likelihood value and copula correlation update ratio at each iteration
         Returns:
-            X_imp (matrix): X with missing values imputed
-            W (matrix): an estimate of the latent coefficient matrix of the low rank Gaussian copula
-            sigma (scalar): an estimate of the latent noise variance of the low rank Gaussian copula
+            Dict
+                imputed_data: numpy array of shape (n,p)
+                    the imputed version of the input data X.
+                copula_factor_loading: numpy array of shape (p,rank)
+                    the estimated copula loading matrix for the latent factors.
+                copula_noise_ratio: florat from 0 to 1
+                    the estimated variance ratio of noise
         """
         if self.cont_indices is None:
             self.cont_indices = self.get_cont_indices(X, self.max_ord)
@@ -44,22 +81,15 @@ class LowRankGaussianCopula(GaussianCopula):
         W, sigma, Z, C, loglik = self._fit_covariance(X=X, rank=rank, threshold=threshold, max_iter=max_iter, verbose=verbose, seed=seed)
         S = self._comp_S(Z, W, sigma) # re-estimate S to ensure numerical stability
         Z_imp = self._impute(Z, S, W)
-        # Rearrange Z_imp so that it's columns correspond to the columns of X
-        #Z_imp_rearranged = np.empty(X.shape)
-        #Z_imp_rearranged[:,ord_indices] = Z_imp[:,:np.sum(ord_indices)]
-        #Z_imp_rearranged[:,cont_indices] = Z_imp[:,np.sum(ord_indices):]
         _order = self.back_to_original_order()
         Z_imp_rearranged = Z_imp[:,_order]
-
         X_imp = np.empty(X.shape)
         if np.sum(self.cont_indices) > 0:
-            #X_imp[:,cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
             X_imp[:,self.cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
         if np.sum(self.ord_indices) >0:
-            #X_imp[:,ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
             X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
 
-        return X_imp, W, sigma
+        return {'imputed_data':X_imp, 'copula_factor_loading':W, 'copula_noise_ratio':sigma}
 
     def _fit_covariance(self, X, rank, threshold=1e-3, max_iter =100, verbose = False, seed=1):
         """

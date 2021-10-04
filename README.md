@@ -30,32 +30,35 @@ When the computation time is the only consideration, mini-batch offline training
 
 ## Examples 
 ```
-from GaussianCopulaImp.expectation_maximization import ExpectationMaximization as EM
+from GaussianCopulaImp.gaussian_copula import GaussianCopula
+from GaussianCopulaImp.helper_data_generation import generate_sigma, generate_mixed_from_gc
+from GaussianCopulaImp.helper_evaluation import get_smae, get_scaled_error
+from GaussianCopulaImp.helper_mask import mask_types
 import numpy as np
+seed = 101
 
-# generate 2-dim mixed data by monotonically transforming 2-dim Gaussian
-np.random.seed(101)
-X = np.random.multivariate_normal(mean = [0, 0], cov = [[1, 0.7], [0.7, 1]], size = 500)
-X[:,1] = np.digitize(X[:,1], [-2, -1, 0, 1, 2])
+# generate 15-dim mixed data (5 exponential variables, 5 1-5 ordinal variables and 5 boolean variables) 
+copula_corr = generate_sigma(seed=seed, p=15)
+X = generate_mixed_from_gc(sigma=copula_corr, n=2000, seed=seed)
 
-# randomly remove 30% entries in each column but avoid an empty row
-mask_size_each = int(500*0.3)
-mask_rows_id = np.random.choice(np.arange(500), size=mask_size_each*2)
-X_mask = X.copy()
-X_mask[mask_rows_id[:mask_size_each], 0] = np.nan
-X_mask[mask_rows_id[mask_size_each:], 1] = np.nan
+# randomly 2 (out of 5) entries of each variable type in each row
+X_mask = mask_types(X, mask_num=2, seed=seed)
+print('The first row of the masked dataset: ')
+print(X_mask[0,:])
 
 # model fitting 
-em = EM()
-X_imp, sigma_est = em.impute_missing(X=X_mask, verbose=True)
+gc = GaussianCopula()
+out = gc.impute_missing(X=X_mask, verbose=True)
+X_imp, copula_corr_est = out['imputed_data'], out['copula_corr']
 
-# Evaluation
-print(f'Estimated latent correlation is {sigma_est[0,1]}')
-err_cont = X_imp[mask_rows_id[:mask_size_each], 0] - X[mask_rows_id[:mask_size_each], 0]
-nrmse_cont = np.sqrt(np.power(err_cont, 2).mean()/np.power(X[mask_rows_id[:mask_size_each], 0],2).mean())
-err_ord = X_imp[mask_rows_id[mask_size_each:], 1] - X[mask_rows_id[mask_size_each:], 1]
-mae_ord = np.abs(err_ord).mean()
-print(f'Imputation error: \n NRMSE for the continuous variable is {nrmse_cont:.3f} \n MAE for the ordinal variable is {mae_ord:.3f}')
+# Evaluation: compute the scaled-MAE (SMAE) for each data type (scaled by MAE of median imputation) 
+smae = get_smae(X_imp, X, X_mask)
+print(f'The SMAE across 5 exponential variables has: mean {smae[:5].mean():.3f} and std {smae[:5].std():.3f}')
+print(f'The SMAE across 5 1-5 oridnal variables has: mean {smae[5:10].mean():.3f} and std {smae[5:10].std():.3f}')
+print(f'The SMAE across 5 boolean variables has: mean {smae[10:].mean():.3f} and std {smae[10:].std():.3f}')
+# Evaluation: compute the scaled l2 error of the estiamted copula correlation matrix (scaled by the l2 norm of the true copula correlation) 
+cor_error = get_scaled_error(copula_corr_est, copula_corr)
+print(f'The scaled correlation error is: {cor_error:.3f}')
 ```
 
 
