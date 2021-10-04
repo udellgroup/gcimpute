@@ -29,7 +29,7 @@ The standard offline training is an approximate EM algorithm, the simplest one t
 When the computation time is the only consideration, mini-batch offline training is prefered. However, there are situations that remembering all data points is either impossible or undesirable. For example, when the data comes at different times and a model is required at each arrival time, future data is unavailable and remembering all data is thus impossible. Also, when the data distribution changes over time, remebering all data points includes much noise in historical data that no longer helps explaining current data and thus undesirable. For these situations, mini-batch online training should be used.
 
 ## Examples 
-```
+```python
 from GaussianCopulaImp.gaussian_copula import GaussianCopula
 from GaussianCopulaImp.helper_data_generation import generate_sigma, generate_mixed_from_gc
 from GaussianCopulaImp.helper_evaluation import get_smae, get_scaled_error
@@ -56,7 +56,8 @@ smae = get_smae(X_imp, X, X_mask)
 print(f'The SMAE across 5 exponential variables has: mean {smae[:5].mean():.3f} and std {smae[:5].std():.3f}')
 print(f'The SMAE across 5 1-5 oridnal variables has: mean {smae[5:10].mean():.3f} and std {smae[5:10].std():.3f}')
 print(f'The SMAE across 5 boolean variables has: mean {smae[10:].mean():.3f} and std {smae[10:].std():.3f}')
-# Evaluation: compute the scaled l2 error of the estiamted copula correlation matrix (scaled by the l2 norm of the true copula correlation) 
+# Evaluation: compute the scaled l2 error of the estiamted copula correlation matrix 
+# (scaled by the l2 norm of the true copula correlation) 
 cor_error = get_scaled_error(copula_corr_est, copula_corr)
 print(f'The scaled correlation error is: {cor_error:.3f}')
 ```

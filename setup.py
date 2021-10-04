@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='GaussianCopulaImp',
-    version='0.0.3',
+    version='0.0.4',
     description='A missing value imputation algorithm using the Gaussian copula model',
     packages=find_packages(),
     url='https://github.com/udellgroup/GaussianCopulaImp',
