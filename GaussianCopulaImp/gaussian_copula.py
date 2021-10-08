@@ -289,8 +289,7 @@ class GaussianCopula():
         X_imp = np.empty(Z_imp.shape)
         X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged, X_batch)
         X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged, X_batch)
-        return {'imputed':X_imp, 'sigma_diff':diff}
-
+        return {'imputed':X_imp, 'sigma_diff':diff, 'latent_data':Z_imp_rearranged}
 
     def _em_step(self, Z, r_lower, r_upper, max_workers=1, num_ord_updates=1):
         """
@@ -339,6 +338,50 @@ class GaussianCopula():
         sigma = np.cov(Z_imp, rowvar=False) + C 
         sigma = self._project_to_correlation(sigma)
         return sigma, Z_imp, Z
+
+    def get_imputed_confidence_interval(self, X, latent_data, alpha = 0.95):
+        '''
+        Compute the confidence interval for each imputed entry, only applicable when all variables are continuous variables.
+        '''
+        pass
+        assert all(self.cont_indices), 'confidence interval is only available for datasets with all continuous variables'
+        Zimp = latent_data
+        n, p = Zimp.shape
+        margin = norm.ppf(1-(1-alpha)/2)
+        upper = np.zeros_like(Zimp) + np.nan
+        lower = np.zeros_like(Zimp) + np.nan
+        for i in range(n):
+            index_m = np.isnan(X[i])
+            index_o = ~index_m
+
+            # compute qunatities
+            for j,missing in enumerate(index_m):
+                if missing:
+                    pass
+                    # rewrite to solving linear equations 
+                    #var_ij = self.sigma[j,j] - self.sigma[j,index_o] @ 
+
+        # monotonic transformation
+        for j in range(p):
+            index_m = np.isnan(X[:,j])
+            #upper[index_m, j] = #
+            #lower[index_m, j] = #
+
+        return {'upper':upper, 'lower':lower}
+
+    def get_reliability(self):
+        if all(self.continuous):
+            return self.get_reliability_cont()
+        elif all(self.ord):
+            return self.get_reliability_ord()
+        else:
+            raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
+
+    def get_reliability_cont(self):
+        pass
+
+    def get_reliability_ord(self):
+        pass
 
     def _project_to_correlation(self, covariance):
         """
