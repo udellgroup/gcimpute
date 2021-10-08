@@ -105,6 +105,7 @@ class GaussianCopula():
         #self._fit_initial_transformation(X, window_size)
         self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
         Z_imp = self._fit_covariance(X, threshold, max_iter, max_workers, num_ord_updates, batch_size, batch_c, verbose, seed)
+        self._latent_Zimp = Z_imp
         # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
         _order = self.back_to_original_order()
         # Rearrange Z_imp so that it's columns correspond to the columns of X
@@ -289,7 +290,7 @@ class GaussianCopula():
         X_imp = np.empty(Z_imp.shape)
         X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged, X_batch)
         X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged, X_batch)
-        return {'imputed':X_imp, 'sigma_diff':diff, 'latent_data':Z_imp_rearranged}
+        return {'imputed':X_imp, 'sigma_diff':diff}
 
     def _em_step(self, Z, r_lower, r_upper, max_workers=1, num_ord_updates=1):
         """
@@ -339,34 +340,43 @@ class GaussianCopula():
         sigma = self._project_to_correlation(sigma)
         return sigma, Z_imp, Z
 
-    def get_imputed_confidence_interval(self, X, latent_data, alpha = 0.95):
+    def get_imputed_confidence_interval(self, alpha = 0.95):
         '''
         Compute the confidence interval for each imputed entry, only applicable when all variables are continuous variables.
         '''
-        pass
         assert all(self.cont_indices), 'confidence interval is only available for datasets with all continuous variables'
-        Zimp = latent_data
+        try:
+            Zimp = self._latent_Zimp
+        except AttributeError:
+            print(f'Cannot form confidence intervals before model fitting and imputation')
+            raise 
         n, p = Zimp.shape
         margin = norm.ppf(1-(1-alpha)/2)
-        upper = np.zeros_like(Zimp) + np.nan
-        lower = np.zeros_like(Zimp) + np.nan
-        for i in range(n):
-            index_m = np.isnan(X[i])
-            index_o = ~index_m
+        upper = np.zeros_like(Zimp) 
+        lower = np.zeros_like(Zimp) 
+        for i,x_row in enumerate(self.transform_function.X):
+            missing_indices = np.isnan(x_row)
+            obs_indices = ~missing_indices
+            sigma_obs_obs = self.sigma[np.ix_(obs_indices,obs_indices)]
+            sigma_obs_missing = self.sigma[np.ix_(obs_indices, missing_indices)]
+            sigma_obs_obs_inv_obs_missing = np.linalg.solve(sigma_obs_obs, sigma_obs_missing)
 
             # compute qunatities
-            for j,missing in enumerate(index_m):
+            j_in_missing = 0
+            for j,missing in enumerate(missing_indices):
                 if missing:
-                    pass
-                    # rewrite to solving linear equations 
-                    #var_ij = self.sigma[j,j] - self.sigma[j,index_o] @ 
+                    var_ij = 1 - np.inner(sigma_obs_obs_inv_obs_missing[:,j_in_missing], self.sigma[j,obs_indices])
+                    std_ij = np.sqrt(var_ij)
+                    upper[i,j] = Zimp[i,j] + margin*std_ij
+                    lower[i,j] = Zimp[i,j] - margin*std_ij
+                    j_in_missing += 1
 
         # monotonic transformation
-        for j in range(p):
-            index_m = np.isnan(X[:,j])
-            #upper[index_m, j] = #
-            #lower[index_m, j] = #
-
+        upper = self.transform_function.impute_cont_observed(Z = upper)
+        lower = self.transform_function.impute_cont_observed(Z = lower)
+        obs_loc = ~np.isnan(self.transform_function.X)
+        upper[obs_loc] = np.nan
+        lower[obs_loc] = np.nan
         return {'upper':upper, 'lower':lower}
 
     def get_reliability(self):
