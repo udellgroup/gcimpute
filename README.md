@@ -3,7 +3,19 @@ This package provides a python implemention to fit a Gaussian copula model, on c
 
 ## Installation
 
-The easiest way is to install using pip: `pip install GaussianCopulaImp` 
+The easiest way is to install using pip: 
+
+`
+pip install GaussianCopulaImp
+` 
+
+If you want to customize the source code, you may install in the editable mode by first `git clone` this respository, and then do
+
+`
+pip install -e .
+`
+
+in the cloned directory.
 
 ## Overview
 
