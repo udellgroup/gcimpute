@@ -110,12 +110,11 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
     # MISSING ELEMENTS
     Z_obs = Z_row[obs_indices]
     Z_imp_row = np.copy(Z_row)
-    if len(missing_indices) > 0:
+    if any(missing_indices):
         # impute missing entries
         Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs) 
         # expected covariance in the missing dimensions
-        if any(missing_indices):
-            C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
+        C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
         # expected covariance brought due to the oridnal entries
         if np.sum(var_ordinal) > 0: 
             ord_in_obs = np.arange(sum(ord_obs_indices))

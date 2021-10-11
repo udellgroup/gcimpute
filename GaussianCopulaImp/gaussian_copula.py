@@ -106,6 +106,7 @@ class GaussianCopula():
         self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
         Z_imp = self._fit_covariance(X, threshold, max_iter, max_workers, num_ord_updates, batch_size, batch_c, verbose, seed)
         self._latent_Zimp = Z_imp
+        
         # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
         _order = self.back_to_original_order()
         # Rearrange Z_imp so that it's columns correspond to the columns of X
