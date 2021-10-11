@@ -1,4 +1,6 @@
 Examples/.ipynb_checkpoints/
+Examples/sanity_check.py
+myvenv/
 .DS_Store
 .vs*
 *.csv

@@ -43,7 +43,8 @@ class LowRankGaussianCopula(GaussianCopula):
                 as ordinal variabels.
         '''
         super().__init__(var_types=var_types, max_ord=max_ord)
-
+        self.W = None
+        self.sigma = None
 
     def impute_missing(self, X, rank, threshold=1e-3, max_iter=50, max_ord=20, verbose = False, seed=1):
         """
@@ -78,9 +79,11 @@ class LowRankGaussianCopula(GaussianCopula):
 
         self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
         # TO DO: consider the order of W
-        W, sigma, Z, C, loglik = self._fit_covariance(X=X, rank=rank, threshold=threshold, max_iter=max_iter, verbose=verbose, seed=seed)
-        S = self._comp_S(Z, W, sigma) # re-estimate S to ensure numerical stability
-        Z_imp = self._impute(Z, S, W)
+        Z, C, loglik = self._fit_covariance(X=X, rank=rank, threshold=threshold, max_iter=max_iter, verbose=verbose, seed=seed)
+        S = self._comp_S(Z) # re-estimate S to ensure numerical stability
+        Z_imp = self._impute(Z, S, self.W)
+        self._latent_Zimp = Z_imp
+
         _order = self.back_to_original_order()
         Z_imp_rearranged = Z_imp[:,_order]
         X_imp = np.empty(X.shape)
@@ -89,9 +92,57 @@ class LowRankGaussianCopula(GaussianCopula):
         if np.sum(self.ord_indices) >0:
             X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
 
-        return {'imputed_data':X_imp, 'copula_factor_loading':W, 'copula_noise_ratio':sigma}
+        return {'imputed_data':X_imp, 'copula_factor_loading':self.W, 'copula_noise_ratio':self.sigma}
 
-    def _fit_covariance(self, X, rank, threshold=1e-3, max_iter =100, verbose = False, seed=1):
+
+    def get_imputed_confidence_interval(self, alpha = 0.95):
+        '''
+        Compute the confidence interval for each imputed entry, only applicable when all variables are continuous variables.
+        '''
+        assert all(self.cont_indices), 'confidence interval is only available for datasets with all continuous variables'
+        try:
+            Zimp = self._latent_Zimp
+        except AttributeError:
+            print(f'Cannot form confidence intervals before model fitting and imputation')
+            raise 
+
+        n, p = Zimp.shape
+        margin = norm.ppf(1-(1-alpha)/2)
+        upper = np.zeros_like(Zimp) 
+        lower = np.zeros_like(Zimp) 
+
+        U,d,_ = np.linalg.svd(self.W, full_matrices=False)
+
+        for i,x_row in enumerate(self.transform_function.X):
+            missing_indices = np.isnan(x_row)
+            obs_indices = ~missing_indices
+
+            Ui_obs = U[obs_indices]
+            Ui_mis = U[missing_indices]
+            # dUmis has dimension k*num_mis
+            dUmis = np.linalg.solve(np.diag(self.sigma*np.power(d, -2))+np.matmul(Ui_obs.T, Ui_obs), Ui_mis.T)
+
+            # compute qunatities
+            j_in_missing = 0
+            for j,missing in enumerate(missing_indices):
+                if missing:
+                    # du has dimension k*1
+                    du = dUmis[:,j_in_missing]
+                    var_ij = self.sigma * (1 + np.inner(du, U[j]))
+                    std_ij = np.sqrt(var_ij)
+                    upper[i,j] = Zimp[i,j] + margin*std_ij
+                    lower[i,j] = Zimp[i,j] - margin*std_ij
+                    j_in_missing += 1
+
+        # monotonic transformation
+        upper = self.transform_function.impute_cont_observed(Z = upper)
+        lower = self.transform_function.impute_cont_observed(Z = lower)
+        obs_loc = ~np.isnan(self.transform_function.X)
+        upper[obs_loc] = np.nan
+        lower[obs_loc] = np.nan
+        return {'upper':upper, 'lower':lower}
+
+    def _fit_covariance(self, X, rank, threshold=1e-3, max_iter=100, verbose = False, seed=1):
         """
         Estimate the covariance parameters of the low rank Gaussian copula, W and sigma, 
         using the data in X and return the estimates and related quantity. 
@@ -122,46 +173,47 @@ class LowRankGaussianCopula(GaussianCopula):
         u,d,_ = np.linalg.svd(corr, full_matrices=False)
         sigma = np.mean(d[rank:])
         W = u[:,:rank] * (np.sqrt(d[:rank] - sigma))
-        W, sigma = self._scale_corr(W, sigma)
+        self.W, self.sigma = self._scale_corr(W, sigma)
+        if verbose:
+            print(f'Ater initialization, W has shape {self.W.shape} and sigma is {self.sigma}')
+
         # Update entries at obseved ordinal locations from SVD initialization
         if sum(self.ord_indices)>0:
             Z_ord[~np.isnan(Z_ord)] = Z_imp[:,:sum(self.ord_indices)][~np.isnan(Z_ord)]
             Z = np.concatenate((Z_ord, Z_cont), axis=1)
-        
 
         loglik = []
         for i in range(max_iter):
-            #print("iteration " + str(i + 1))
-            W_new, sigma_new, C, iterloglik = self._em_step(Z, Z_ord_lower, Z_ord_upper, W, sigma) # YX
+            prev_W = self.W
+            W_new, sigma_new, C, iterloglik = self._em_step(Z, Z_ord_lower, Z_ord_upper) 
+            self.W, self.sigma = W_new, sigma_new
             # stop early if the change in the correlation estimation is below the threshold
-            #loglik.append(-negloglik)
-            loglik.append(iterloglik) #YX
-            err = self._get_scaled_diff(W, W_new)
+            loglik.append(iterloglik) 
+            err = self._get_scaled_diff(prev_W, self.W)
+
             if err < threshold:
-                return W_new, sigma_new, Z, C, loglik
+                return Z, C, loglik
             if len(loglik) > 1 and self._get_scaled_diff(loglik[-2], loglik[-1]) < 0.01:
-                if verbose: print('early stop because changed likelihood below 1%')
-                return W_new, sigma_new, Z, C, loglik
+                if verbose: 
+                    print('early stop because changed likelihood below 1%')
+                return Z, C, loglik
             if verbose:
-                print('sigma estimate: '+ str(sigma))
-                print('log likelihood: '+str(iterloglik))
-                print('Updated error: '+str(err))
-            sigma, W = sigma_new, W_new
-        return W, sigma, Z, C, loglik
+                print(f'Interation {i+1}: sigma estimate {self.sigma:.3f}, copula  parameter change ratio {err:.3f}, likelihood {iterloglik:.3f}')
+
+        return Z, C, loglik
 
 
-    def _comp_S(self, Z, W, sigma):
+    def _comp_S(self, Z):
         """
         Intermidiate step.
         It seems that S must be updated using the last obtained W and sigma, otherwise numerical instability happens. 
         Such problem is not seen in R implementation. Keep an eye.
         Args:
-            W (matrix): an estimate of the latent coefficient matrix of the low rank Gaussian copula
-            sigma (scalar): an estimate of the latent noise variance of the low rank Gaussian copula
             Z (matrix): the transformed value, at observed continuous entry; the conditional mean, at observed ordinal entry; NA elsewhere
         Returns:
             S: a factor used for imputation
         """
+        W, sigma = self.W, self.sigma
         n, k = Z.shape[0], W.shape[1]
         U, d, _ = np.linalg.svd(W, full_matrices=False)
         S = np.zeros((n,k))
@@ -197,9 +249,7 @@ class LowRankGaussianCopula(GaussianCopula):
         return Zimp
 
 
-
-
-    def _em_step(self, Z, r_lower, r_upper, W, sigma):
+    def _em_step(self, Z, r_lower, r_upper):
         """
         EM algorithm to estimate the low rank Gaussian copula, W and sigma.
         Args:
@@ -214,7 +264,9 @@ class LowRankGaussianCopula(GaussianCopula):
             loglik: log likelihood during iterations, expected to increase every iteration, but possible that it does not (indicating bad fit)
 
         """
+        assert len(self.W.shape)==2, f'invalid W shape {self.W.shape}'
         n,p = Z.shape
+        W, sigma = self.W, self.sigma
         rank = W.shape[1]
         if r_lower.shape[1] == 0:
             num_ord = 0
