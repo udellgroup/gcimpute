@@ -122,7 +122,7 @@ class GaussianCopula():
 
     def impute_missing_online(self, X, 
                               threshold=0.01, max_workers=1, num_ord_updates=1, 
-                              batch_size=100, batch_c=0, window_size=200, const_decay = -1, 
+                              batch_size=100, batch_c=0, window_size=200, const_decay = 0.5, 
                               verbose=False, seed=1, sigma_diff=['F']):
         """
         Fit the Gaussian copula model at each new batch of data points. If the provided X is not an iterable but a numpy array, 
@@ -143,6 +143,10 @@ class GaussianCopula():
             sigma_rearragned (matrix): an estimate of the covariance of the copula
         """
         assert self.cont_indices is not None and self.ord_indices is not None, 'Variable types must be provided for online fit'
+        if const_decay<=0 or const_decay>=1:
+            assert batch_c>0, 'batch_c must be positive when not using constant learning rate'
+        else:
+            assert 0<const_decay<1, 'const_decay must be a value between 0 and 1'
         self.transform_function = OnlineTransformFunction(self.cont_indices, self.ord_indices, window_size=window_size)
         n,p = X.shape
         X_imp = np.zeros_like(X)
