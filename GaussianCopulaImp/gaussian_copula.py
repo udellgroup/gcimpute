@@ -345,6 +345,25 @@ class GaussianCopula():
         sigma = self._project_to_correlation(sigma)
         return sigma, Z_imp, Z
 
+    def get_cond_std_missing_cont(self):
+        std_cond = np.zeros_like(self.transform_function.X)
+        obs_loc = ~np.isnan(self.transform_function.X)
+        std_cond[obs_loc] = np.nan
+
+        for i,x_row in enumerate(self.transform_function.X):
+            missing_indices = np.isnan(x_row)
+            obs_indices = ~missing_indices
+            if any(missing_indices):
+                sigma_obs_obs = self.sigma[np.ix_(obs_indices,obs_indices)]
+                sigma_obs_missing = self.sigma[np.ix_(obs_indices, missing_indices)]
+                sigma_obs_obs_inv_obs_missing = np.linalg.solve(sigma_obs_obs, sigma_obs_missing)
+
+                # compute quantities
+                _var = 1 - np.diagonal(np.matmul(sigma_obs_missing.T, sigma_obs_obs_inv_obs_missing))
+                std_cond[i, missing_indices] = np.sqrt(_var)
+                
+        return std_cond
+
     def get_imputed_confidence_interval(self, alpha = 0.95):
         '''
         Compute the confidence interval for each imputed entry, only applicable when all variables are continuous variables.
@@ -357,24 +376,11 @@ class GaussianCopula():
             raise 
         n, p = Zimp.shape
         margin = norm.ppf(1-(1-alpha)/2)
-        upper = np.zeros_like(Zimp) 
-        lower = np.zeros_like(Zimp) 
-        for i,x_row in enumerate(self.transform_function.X):
-            missing_indices = np.isnan(x_row)
-            obs_indices = ~missing_indices
-            sigma_obs_obs = self.sigma[np.ix_(obs_indices,obs_indices)]
-            sigma_obs_missing = self.sigma[np.ix_(obs_indices, missing_indices)]
-            sigma_obs_obs_inv_obs_missing = np.linalg.solve(sigma_obs_obs, sigma_obs_missing)
 
-            # compute qunatities
-            j_in_missing = 0
-            for j,missing in enumerate(missing_indices):
-                if missing:
-                    var_ij = 1 - np.inner(sigma_obs_obs_inv_obs_missing[:,j_in_missing], self.sigma[j,obs_indices])
-                    std_ij = np.sqrt(var_ij)
-                    upper[i,j] = Zimp[i,j] + margin*std_ij
-                    lower[i,j] = Zimp[i,j] - margin*std_ij
-                    j_in_missing += 1
+        # upper and lower have np.nan at oberved locations because std_cond has np.nan at those locations
+        std_cond = self.get_cond_std_missing_cont()
+        upper = Zimp + margin * std_cond
+        lower = Zimp - margin * std_cond
 
         # monotonic transformation
         upper = self.transform_function.impute_cont_observed(Z = upper)
@@ -384,18 +390,25 @@ class GaussianCopula():
         lower[obs_loc] = np.nan
         return {'upper':upper, 'lower':lower}
 
-    def get_reliability(self):
+    def get_reliability(self, Ximp, alpha=0.95):
         if all(self.continuous):
-            return self.get_reliability_cont()
+            return self.get_reliability_cont(Ximp, alpha)
         elif all(self.ord):
-            return self.get_reliability_ord()
+            return self.get_reliability_ord(Ximp)
         else:
             raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
 
-    def get_reliability_cont(self):
-        pass
+    def get_reliability_cont(self, Ximp, alpha=0.95):
+        ct = self.get_imputed_confidence_interval(alpha = alpha)
+        d = ct['upper'] - ct['lower']
 
-    def get_reliability_ord(self):
+        d_square, x_square = np.power(d,2), np.power(Ximp, 2)
+        missing_loc = np.isnan(self.transform_function.X)
+        # reliability has np.nan at observation locations because d has np.nan at those locations
+        reliability = (d_square[missing_loc].sum() - d_square) / (x_square[missing_loc].sum() - x_square) 
+        return reliability
+
+    def get_reliability_ord(self, Ximp):
         pass
 
     def _project_to_correlation(self, covariance):

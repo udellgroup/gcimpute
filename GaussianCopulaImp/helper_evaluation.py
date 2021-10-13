@@ -121,3 +121,28 @@ def grassman_dist(A,B):
     _, d,_ = np.linalg.svd(np.dot(U1.T, U2))
     theta = np.arccos(d)
     return np.linalg.norm(theta), np.linalg.norm(d1-d2)
+
+def error_by_reliability(error, r, xtrue, ximp, num=100, start=1):
+    q = np.linspace(0, 1-start/num, num=num)
+    r_q = np.nanquantile(r, q)
+    err = np.zeros(num)
+    loc_missing = ~np.isnan(r)
+    r, xtrue, ximp = r[loc_missing], xtrue[loc_missing], ximp[loc_missing]
+    for i,x in enumerate(r_q):
+        #  keep entries with top reliabilities 
+        loc_q = r >= x
+
+        val, imp = xtrue[loc_q], ximp[loc_q]
+        if error == 'NRMSE':
+            err[i] = np.sqrt(np.power(val-imp, 2).mean()) / np.sqrt(np.power(val, 2).mean()) 
+        elif error == 'RMSE':
+            err[i] = np.sqrt(np.power(val-imp, 2).mean()) 
+        elif error == 'MAE':
+            err[i] = np.abs(val-imp).mean()
+        else: 
+            raise ValueError('Error can only be one of NRMSE, RMSE, MAE.')
+    return err
+
+
+
+
