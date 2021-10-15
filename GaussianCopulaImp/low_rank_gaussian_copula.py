@@ -82,7 +82,9 @@ class LowRankGaussianCopula(GaussianCopula):
         Z, C, loglik = self._fit_covariance(X=X, rank=rank, threshold=threshold, max_iter=max_iter, verbose=verbose, seed=seed)
         S = self._comp_S(Z) # re-estimate S to ensure numerical stability
         Z_imp = self._impute(Z, S, self.W)
+        # 
         self._latent_Zimp = Z_imp
+        self._latent_Cord = C
 
         _order = self.back_to_original_order()
         Z_imp_rearranged = Z_imp[:,_order]
@@ -95,21 +97,20 @@ class LowRankGaussianCopula(GaussianCopula):
         return {'imputed_data':X_imp, 'copula_factor_loading':self.W, 'copula_noise_ratio':self.sigma}
 
 
-    def get_imputed_confidence_interval(self, alpha = 0.95):
+    def _get_cond_std_missing(self):
         '''
-        Compute the confidence interval for each imputed entry, only applicable when all variables are continuous variables.
+        The conditional std of each missing location given other observation. 
+        The computation under LRGC is adjusted by exploting the SVD decomposition of the copula parameter W.
         '''
-        assert all(self.cont_indices), 'confidence interval is only available for datasets with all continuous variables'
         try:
-            Zimp = self._latent_Zimp
+            Cord = self._latent_Cord
         except AttributeError:
-            print(f'Cannot form confidence intervals before model fitting and imputation')
+            print(f'Cannot compute conditional std of missing entries before model fitting and imputation')
             raise 
 
-        n, p = Zimp.shape
-        margin = norm.ppf(1-(1-alpha)/2)
-        upper = np.zeros_like(Zimp) 
-        lower = np.zeros_like(Zimp) 
+        std_cond = np.zeros_like(self.transform_function.X)
+        obs_loc = ~np.isnan(self.transform_function.X)
+        std_cond[obs_loc] = np.nan
 
         U,d,_ = np.linalg.svd(self.W, full_matrices=False)
 
@@ -117,30 +118,22 @@ class LowRankGaussianCopula(GaussianCopula):
             missing_indices = np.isnan(x_row)
             obs_indices = ~missing_indices
 
-            Ui_obs = U[obs_indices]
-            Ui_mis = U[missing_indices]
-            # dUmis has dimension k*num_mis
-            dUmis = np.linalg.solve(np.diag(self.sigma*np.power(d, -2))+np.matmul(Ui_obs.T, Ui_obs), Ui_mis.T)
+            if any(missing_indices):
+                Ui_obs = U[obs_indices]
+                # Ui_mis has dimension num_mis*k
+                Ui_mis = U[missing_indices]
+                # dUmis has dimension k*num_mis
+                dUmis = np.linalg.solve(np.diag(self.sigma*np.power(d, -2))+np.matmul(Ui_obs.T, Ui_obs), Ui_mis.T)
 
-            # compute qunatities
-            j_in_missing = 0
-            for j,missing in enumerate(missing_indices):
-                if missing:
-                    # du has dimension k*1
-                    du = dUmis[:,j_in_missing]
-                    var_ij = self.sigma * (1 + np.inner(du, U[j]))
-                    std_ij = np.sqrt(var_ij)
-                    upper[i,j] = Zimp[i,j] + margin*std_ij
-                    lower[i,j] = Zimp[i,j] - margin*std_ij
-                    j_in_missing += 1
+                _var = self.sigma * (1 + np.einsum('ij, ji -> i', Ui_mis, dUmis))
+                if self._latent_Cord[i, obs_indices].sum()>0:
+                    # dimension of num_obs*num_mis
+                    Wobs_Mobs_inv_WmisT = np.matmul(Ui_obs, dUmis)
+                    _var += np.einsum('ij, j, ji -> i', Wobs_Mobs_inv_WmisT.T, Cord[i, obs_indices], Wobs_Mobs_inv_WmisT)
+                std_cond[i, missing_indices] = np.sqrt(_var)
+        return std_cond
 
-        # monotonic transformation
-        upper = self.transform_function.impute_cont_observed(Z = upper)
-        lower = self.transform_function.impute_cont_observed(Z = lower)
-        obs_loc = ~np.isnan(self.transform_function.X)
-        upper[obs_loc] = np.nan
-        lower[obs_loc] = np.nan
-        return {'upper':upper, 'lower':lower}
+
 
     def _fit_covariance(self, X, rank, threshold=1e-3, max_iter=100, verbose = False, seed=1):
         """
@@ -226,8 +219,6 @@ class LowRankGaussianCopula(GaussianCopula):
 
             S[i,:] = np.linalg.solve(UU_obs + sigma * np.diag(1.0/np.square(d)), np.dot(Ui_obs.T, zi_obs))
         return S
-
-
 
     def _impute(self, Z, S, W):
         """

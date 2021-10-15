@@ -11,20 +11,22 @@ def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates):
     """
     Iterate the rows over provided matrix 
     """
-    num, p = Z.shape
+    n, p = Z.shape
     Z_imp = np.copy(Z)
     C = np.zeros((p,p))
+    C_ord = np.zeros((n,p))
     trunc_warn = False
-    for i in range(num):
-        c, z_imp, z, warn = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates)
+    for i in range(n):
+        c, z_imp, z, warn, c_ordinal = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates)
         Z_imp[i,:] = z_imp
         Z[i,:] = z
+        C_ord[i,:] = c_ordinal
         C += c
         trunc_warn = trunc_warn or warn
     # TO DO: no need to return Z, just edit it during the process
     if trunc_warn:
         print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
-    return C, Z_imp, Z
+    return C, Z_imp, Z, C_ord
 
 
 def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
@@ -70,6 +72,8 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
     # TO DO: the updating order of ordinal variables may make a difference in the algorithm statbility
     # initialize vector of variances for observed ordinal dimensions
     p, num_ord = Z_row.shape[0], r_upper_row.shape[0]
+    # var_ordinal stores the conditional variance of each variable given all other observation,
+    # it has 0 at observed continuous and missing locations.
     var_ordinal = np.zeros(p)  
     ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
     truncnorm_warn = False
@@ -123,4 +127,4 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
             C[np.ix_(ord_obs_indices, missing_indices)] += cov_missing_obs_ord.T
             C[np.ix_(missing_indices, missing_indices)] += np.matmul(cov_missing_obs_ord, J_obs_missing[ord_in_obs])
 
-    return C, Z_imp_row, Z_row, truncnorm_warn
+    return C, Z_imp_row, Z_row, truncnorm_warn, var_ordinal

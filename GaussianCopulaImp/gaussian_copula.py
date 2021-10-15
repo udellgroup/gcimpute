@@ -10,7 +10,10 @@ from collections import defaultdict
 
 class GaussianCopula():
     '''
-    A method to fit a Gaussian copul model from incomplete data and then use the fitted model to impute the missing entries.
+    Gaussian copula model.
+    This class allows to estimate the parameters of a Gaussian copula model from incomplete data, 
+    and impute the missing entries using the learned model.
+
 
     Attributes
     ----------
@@ -29,9 +32,14 @@ class GaussianCopula():
         fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
     impute_missing_online:
         At each sequentially observed data batch, fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
+    get_imputed_confidence_interval:
+        Get the confidence intervals for the imputed missing entries when all variables are continuous
+    get_reliability:
+        Get the reliability, a relative quantity across all imputed entries, when either all variables are continuous or all variables are ordinal 
+
     '''
 
-    def __init__(self, var_types=None, max_ord=20, sigma_init = None):
+    def __init__(self, var_types=None, max_ord=20):
         '''
         The user can tell the model which variables are continuous and which are ordinal by the following two ways:
         (1) input a dict var_types that contains valid assignmetns of cont_indices and ord_indices;
@@ -40,7 +48,7 @@ class GaussianCopula():
 
         Args:
             var_types: dict
-            max_ord: int
+            max_ord: int, default = 20
                 When var_types is None, max_ord is used to automatically determine continuous variables and ordinal variables: variables 
                 whose number of observed unqiue values is larger than max_ord are regarded as continuous variables and others are regarded 
                 as ordinal variabels.
@@ -56,10 +64,7 @@ class GaussianCopula():
             self.cont_indices = None
             self.ord_indices = None 
         self.max_ord = max_ord
-        if sigma_init is not None:
-            message = 'the intial correlation matrix must be nonsingular, while the input has the smallest singular value below 1e-7'
-            assert svdvals(sigma_init).min() > 1e-7, message
-        self.sigma = sigma_init
+        self.sigma = None
 
     def impute_missing(self, X, threshold=0.01, max_iter=50, max_workers=1,
                        batch_size=100, batch_c=0, 
@@ -104,8 +109,11 @@ class GaussianCopula():
 
         #self._fit_initial_transformation(X, window_size)
         self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
-        Z_imp = self._fit_covariance(X, threshold, max_iter, max_workers, num_ord_updates, batch_size, batch_c, verbose, seed)
+        Z_imp, C_ord = self._fit_covariance(X, threshold, max_iter, max_workers, num_ord_updates, batch_size, batch_c, verbose, seed)
+
+        # attributes to store after model fitting
         self._latent_Zimp = Z_imp
+        self._latent_Cord = C_ord
         
         # rearrange sigma so it corresponds to the column ordering of X ## first few dims are always continuous, after always ordinal
         _order = self.back_to_original_order()
@@ -173,6 +181,46 @@ class GaussianCopula():
         return {'imputed_data':X_imp, 'copula_corr':sigma_rearranged, 'copula_corr_change':sigma_diff_output}
 
 
+    def get_imputed_confidence_interval(self, alpha = 0.95):
+        '''
+        Compute the confidence interval for each imputed entry, only applicable when all variables are continuous variables.
+        '''
+        assert all(self.cont_indices), 'confidence interval is only available for datasets with all continuous variables'
+        try:
+            Zimp = self._latent_Zimp
+        except AttributeError:
+            print(f'Cannot form confidence intervals before model fitting and imputation')
+            raise 
+        n, p = Zimp.shape
+        margin = norm.ppf(1-(1-alpha)/2)
+
+        # upper and lower have np.nan at oberved locations because std_cond has np.nan at those locations
+        std_cond = self._get_cond_std_missing()
+        upper = Zimp + margin * std_cond
+        lower = Zimp - margin * std_cond
+
+        # monotonic transformation
+        upper = self.transform_function.impute_cont_observed(Z = upper)
+        lower = self.transform_function.impute_cont_observed(Z = lower)
+        obs_loc = ~np.isnan(self.transform_function.X)
+        upper[obs_loc] = np.nan
+        lower[obs_loc] = np.nan
+        return {'upper':upper, 'lower':lower}
+
+    def get_reliability(self, Ximp=None, alpha=0.95):
+        '''
+        Get the reliability of imputed entries. The notion of reliability is a relative quantity across all imputed entries.
+        Entries with higher reliability are more likely to have small imputation error. 
+        '''
+        if all(self.cont_indices):
+            return self.get_reliability_cont(Ximp, alpha)
+        elif all(self.ord_indices):
+            return self.get_reliability_ord()
+        else:
+            raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
+
+
+
     def _fit_covariance(self, X, 
                         threshold=0.01, max_iter=100, max_workers=4, num_ord_updates=1, 
                         batch_size=100, batch_c=0, 
@@ -227,14 +275,14 @@ class GaussianCopula():
                     indices = np.concatenate((training_permutation[batch_lower:], training_permutation[:batch_upper]))
                 else:
                     indices = training_permutation[batch_lower:batch_upper]
-                sigma, Z_imp_batch, Z_batch = self._em_step(Z[indices], Z_ord_lower[indices], Z_ord_upper[indices], max_workers, num_ord_updates)
+                sigma, Z_imp_batch, Z_batch, C_ord = self._em_step(Z[indices], Z_ord_lower[indices], Z_ord_upper[indices], max_workers, num_ord_updates)
                 Z_imp[indices] = Z_imp_batch
                 Z[indices] = Z_batch
                 decay_coef = batch_c/(i + 1 + batch_c)
                 self.sigma = sigma*decay_coef + (1 - decay_coef)*prev_sigma
             # standard EM: each iteration uses all data points
             else:
-                sigma, Z_imp, Z = self._em_step(Z, Z_ord_lower, Z_ord_upper, max_workers, num_ord_updates)
+                sigma, Z_imp, Z, C_ord = self._em_step(Z, Z_ord_lower, Z_ord_upper, max_workers, num_ord_updates)
                 #print(f"at iteration {i}, sigma has {np.isnan(sigma).sum()} nan entries, Z_imp has {np.isnan(Z_imp).sum()} nan entries")
                 self.sigma = sigma
             # stop early if the change in the correlation estimation is below the threshold
@@ -248,7 +296,7 @@ class GaussianCopula():
             
         if verbose and i == max_iter-1: 
             print("Convergence not achieved at maximum iterations")
-        return  Z_imp
+        return  Z_imp, C_ord
     
 
 
@@ -282,7 +330,7 @@ class GaussianCopula():
         Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, seed)
         Z_cont = self.transform_function.partial_evaluate_cont_latent(X_batch) 
         Z = np.concatenate((Z_ord, Z_cont), axis=1)
-        sigma, Z_imp, Z = self._em_step(Z, Z_ord_lower, Z_ord_upper, max_workers, num_ord_updates)
+        sigma, Z_imp, Z, C_ord = self._em_step(Z, Z_ord_lower, Z_ord_upper, max_workers, num_ord_updates)
         prev_sigma = self.sigma
         if sigma_update:
             self.sigma = sigma*decay_coef + (1-decay_coef)*self.sigma
@@ -319,7 +367,7 @@ class GaussianCopula():
         assert n>0, 'EM step receives empty input'
         if max_workers ==1:
             args = (Z, r_lower, r_upper, self.sigma, num_ord_updates)
-            C, Z_imp, Z = _em_step_body_(args)
+            C, Z_imp, Z, C_ord = _em_step_body_(args)
             C = C/n
         else:
             if max_workers is None: 
@@ -334,18 +382,29 @@ class GaussianCopula():
                     ) for i in range(max_workers)]
             Z_imp = np.empty((n,p))
             C = np.zeros((p,p))
+            C_ord = np.empty((n,p))
             with ProcessPoolExecutor(max_workers=max_workers) as pool: 
                 res = pool.map(_em_step_body_, args)
-                for i,(C_divide, Z_imp_divide, Z_divide) in enumerate(res):
+                for i,(C_divide, Z_imp_divide, Z_divide, C_ord_divide) in enumerate(res):
                     C += C_divide/n
                     Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
                     Z[divide[i]:divide[i+1],:] = Z_divide
+                    C_ord[divide[i]:divide[i+1],:] = C_ord_divide
 
         sigma = np.cov(Z_imp, rowvar=False) + C 
         sigma = self._project_to_correlation(sigma)
-        return sigma, Z_imp, Z
+        return sigma, Z_imp, Z, C_ord
 
-    def get_cond_std_missing_cont(self):
+    def _get_cond_std_missing(self):
+        '''
+        The conditional std of each missing location given other observation. 
+        '''
+        try:
+            Cord = self._latent_Cord
+        except AttributeError:
+            print(f'Cannot compute conditional std of missing entries before model fitting and imputation')
+            raise 
+
         std_cond = np.zeros_like(self.transform_function.X)
         obs_loc = ~np.isnan(self.transform_function.X)
         std_cond[obs_loc] = np.nan
@@ -353,50 +412,24 @@ class GaussianCopula():
         for i,x_row in enumerate(self.transform_function.X):
             missing_indices = np.isnan(x_row)
             obs_indices = ~missing_indices
+
             if any(missing_indices):
                 sigma_obs_obs = self.sigma[np.ix_(obs_indices,obs_indices)]
                 sigma_obs_missing = self.sigma[np.ix_(obs_indices, missing_indices)]
                 sigma_obs_obs_inv_obs_missing = np.linalg.solve(sigma_obs_obs, sigma_obs_missing)
 
                 # compute quantities
-                _var = 1 - np.diagonal(np.matmul(sigma_obs_missing.T, sigma_obs_obs_inv_obs_missing))
+                # _var = 1 - np.diagonal(np.matmul(sigma_obs_missing.T, sigma_obs_obs_inv_obs_missing))
+                # use einsum for faster and fewer computation
+                _var = 1 - np.einsum('ij, ji -> i', sigma_obs_missing.T, sigma_obs_obs_inv_obs_missing)
+                # When there exists valid ordinal observation, we will have self._latent_Cord[i, obs_indices].sum() positive.
+                if self._latent_Cord[i, obs_indices].sum()>0:
+                    _var += np.einsum('ij, j, ji -> i', sigma_obs_obs_inv_obs_missing.T, Cord[i, obs_indices], sigma_obs_obs_inv_obs_missing)
                 std_cond[i, missing_indices] = np.sqrt(_var)
-                
         return std_cond
 
-    def get_imputed_confidence_interval(self, alpha = 0.95):
-        '''
-        Compute the confidence interval for each imputed entry, only applicable when all variables are continuous variables.
-        '''
-        assert all(self.cont_indices), 'confidence interval is only available for datasets with all continuous variables'
-        try:
-            Zimp = self._latent_Zimp
-        except AttributeError:
-            print(f'Cannot form confidence intervals before model fitting and imputation')
-            raise 
-        n, p = Zimp.shape
-        margin = norm.ppf(1-(1-alpha)/2)
 
-        # upper and lower have np.nan at oberved locations because std_cond has np.nan at those locations
-        std_cond = self.get_cond_std_missing_cont()
-        upper = Zimp + margin * std_cond
-        lower = Zimp - margin * std_cond
-
-        # monotonic transformation
-        upper = self.transform_function.impute_cont_observed(Z = upper)
-        lower = self.transform_function.impute_cont_observed(Z = lower)
-        obs_loc = ~np.isnan(self.transform_function.X)
-        upper[obs_loc] = np.nan
-        lower[obs_loc] = np.nan
-        return {'upper':upper, 'lower':lower}
-
-    def get_reliability(self, Ximp, alpha=0.95):
-        if all(self.continuous):
-            return self.get_reliability_cont(Ximp, alpha)
-        elif all(self.ord):
-            return self.get_reliability_ord(Ximp)
-        else:
-            raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
+    
 
     def get_reliability_cont(self, Ximp, alpha=0.95):
         ct = self.get_imputed_confidence_interval(alpha = alpha)
@@ -408,8 +441,32 @@ class GaussianCopula():
         reliability = (d_square[missing_loc].sum() - d_square) / (x_square[missing_loc].sum() - x_square) 
         return reliability
 
-    def get_reliability_ord(self, Ximp):
-        pass
+    def get_reliability_ord(self):
+        std_cond = self._get_cond_std_missing()
+
+        try:
+            Zimp = self._latent_Zimp
+        except AttributeError:
+            print(f'Cannot compute reliability before model fitting and imputation')
+            raise 
+
+        Z_ord_lower, _ = self.transform_function.get_ord_latent()
+
+        reliability = np.zeros_like(Zimp) + np.nan
+        p = Zimp.shape[1]
+        for j in range(p):
+            # get cutsoff
+            col = Z_ord_lower[:,j]
+            missing_indices = np.isnan(col)
+            cuts = np.unique(col[~missing_indices])
+            cuts = cuts[np.isfinite(cuts)]
+
+            # compute reliability/the probability lower bound
+            for i,x in enumerate(missing_indices):
+                if x:
+                    t = np.abs(Zimp[i,j] - cuts).min()
+                    reliability[i,j] = 1 - np.power(std_cond[i,j]/t, 2)
+        return reliability
 
     def _project_to_correlation(self, covariance):
         """
