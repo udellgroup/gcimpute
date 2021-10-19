@@ -21,23 +21,28 @@ def run_onerep(seed=1, n=2000,
 	X = generate_mixed_from_gc(sigma=sigma, n=n, seed=seed, var_types=var_types, cutoff_by=cutoff_by)
 	X_masked = mask_types(X, MASK_NUM, seed=seed)
 
+	p = sum([len(x) for x in var_types.values()])
+	cont_indices = np.array([False] * p)
+	cont_indices[var_types['cont']] = True
+
 	# online model fitting 
-	p = sum([len(val) for val in var_types.values()])
-	cont_indices = np.zeros(p)
-	cont_indices[var_types['cont']] = 1
-	var_types_input = {'cont':cont_indices==1, 'ord':cont_indices==0}
-	gc = GaussianCopula(var_types = var_types_input)
-	out = gc.impute_missing_online(X=X_masked, 
-		                           batch_size=batch_size, const_decay = const_decay,
-		                           num_ord_updates=num_ord_updates,threshold=threshold, max_workers=max_workers)
-	X_imp_online, copula_corr_change = out['imputed_data'], out['copula_corr_change']
+	gc = GaussianCopula(training_mode='minibatch-online', 
+		const_stepsize=const_decay, 
+		batch_size=batch_size, 
+		cont_indices=cont_indices, 
+		tol=threshold, max_iter=max_iter, 
+		random_state=seed, n_jobs=max_workers)
+	X_imp_online = gc.fit_transform(X_masked)
+	copula_corr_change = gc.corr_diff
 
 	# offline model fitting
-	gc = GaussianCopula()
-	out = gc.impute_missing(X=X_masked, 
-		    			    max_iter=max_iter,batch_size=batch_size, batch_c=batch_c, 
-		                    num_ord_updates=num_ord_updates, threshold=threshold, max_workers=max_workers)
-	X_imp_offline = out['imputed_data']
+	gc = GaussianCopula(training_mode='minibatch-offline', 
+		stepsize_func=lambda k, c=batch_c:c/(k+c), const_stepsize=None, 
+		batch_size=batch_size, 
+		cont_indices=cont_indices, 
+		tol=threshold, max_iter=max_iter, 
+		random_state=seed, n_jobs=max_workers)
+	X_imp_offline = gc.fit_transform(X_masked)
 	
 	# save results 
 	smae_online = get_smae_batch(X_imp_online, X, X_masked, batch_size=batch_size, per_type=True, var_types=var_types)

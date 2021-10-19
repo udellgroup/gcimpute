@@ -16,17 +16,19 @@ def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates):
     C = np.zeros((p,p))
     C_ord = np.zeros((n,p))
     trunc_warn = False
+    loglik = 0
     for i in range(n):
-        c, z_imp, z, warn, c_ordinal = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates)
+        c, z_imp, z, c_ordinal, _loglik, warn = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates)
         Z_imp[i,:] = z_imp
         Z[i,:] = z
         C_ord[i,:] = c_ordinal
         C += c
+        loglik += _loglik
         trunc_warn = trunc_warn or warn
     # TO DO: no need to return Z, just edit it during the process
     if trunc_warn:
         print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
-    return C, Z_imp, Z, C_ord
+    return C, Z_imp, Z, C_ord, loglik
 
 
 def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
@@ -94,10 +96,7 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
                     new_mean_ij = Z_row[j] - new_var_ij*sigma_obs_obs_inv_Zobs_row[j_in_obs]
                     a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
                     try:
-                        mean, var = truncnorm.stats(a=a_ij,b=b_ij,
-                            loc=new_mean_ij,
-                            scale=new_std_ij,
-                            moments='mv')
+                        mean, var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
                         if np.isfinite(var):
                             var_ordinal[j] = var
                         if np.isfinite(mean):
@@ -127,4 +126,7 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
             C[np.ix_(ord_obs_indices, missing_indices)] += cov_missing_obs_ord.T
             C[np.ix_(missing_indices, missing_indices)] += np.matmul(cov_missing_obs_ord, J_obs_missing[ord_in_obs])
 
-    return C, Z_imp_row, Z_row, truncnorm_warn, var_ordinal
+    # log-likelihood at observed locations
+    negloglik = np.linalg.slogdet(sigma_obs_obs)[1] + np.inner(np.dot(sigma_obs_obs_inv, Z_obs), Z_obs)
+    loglik = -negloglik/2.0 
+    return C, Z_imp_row, Z_row, var_ordinal, loglik, truncnorm_warn

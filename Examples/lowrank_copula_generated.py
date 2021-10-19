@@ -38,16 +38,17 @@ def run_onerep(setting, seed=1,
     X_masked = mask(Xtrue, mask_fraction = mask_ratio, seed=seed)
 
     start_time = time.time()
-    LRGC = LowRankGaussianCopula()
-    out = LRGC.impute_missing(X=X_masked, rank=rank, threshold=threshold, max_iter=max_iter, seed=seed)
-    X_imp, W, sigma_est = out['imputed_data'], out['copula_factor_loading'], out['copula_noise_ratio']
+    LRGC = LowRankGaussianCopula(rank=rank, tol=threshold, random_state=seed, max_iter=max_iter)
+    X_imp = LRGC.fit_transform(X=X_masked)
+    out = LRGC.get_params()
+    W, sigma_est =out['copula_factor_loading'], out['copula_noise_ratio']
     end_time = time.time()
 
     if setting in ['ord', 'bin']:
         error = get_mae(X_imp, Xtrue, X_masked)
     else:
         error = get_rmse(X_imp, Xtrue, X_masked, relative=True)
-    W_err = grassman_dist(W,Wtrue)
+    W_err = grassman_dist(W,Wtrue)[0]
     return {'error':error, 'W_err':W_err, 'noise_ratio':sigma_est, 'runtime':end_time - start_time}
 
 def main(setting, NUM_STEPS=10, 

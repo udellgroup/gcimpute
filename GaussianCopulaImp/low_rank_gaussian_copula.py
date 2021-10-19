@@ -6,96 +6,99 @@ import numpy as np
 
 class LowRankGaussianCopula(GaussianCopula):
     '''
-    A method to fit a low rank Gaussian copul model from incomplete data and then use the fitted model to impute the missing entries.
-    The low rank Gaussian copula model means the fitted copula correlation matrix admits decomposition sigma*I+A*t(A), 
+    Low rank Gaussian copula model.
+    This class allows to estimate the parameters of a low rank Gaussian copula model from incomplete data, 
+    and impute the missing entries using the learned model.
+    It is a special case of Gaussian copula model with structured copula correlation matrix: it admits decomposition sigma*I+A*t(A), 
     where A has shape (p,rank) with rank<p. 
 
     Attributes
     ----------
-    cont_indices: list 
-        list of Boolean variables of length p (the number of variables), indicating locations of continuous variables.
-    ord_indices: list
-        list of Boolean variables of length p, indicating locations of ordinal variables (including binary variables). 
-    max_ord: int
-        int. When cont_indices and ord_indices are not specified, variables whose numbers of unique values are regarded as continuous variables and others as ordinal variables.
-    sigma: numpy array
-        numpy array of shape (p, p), the copula correlation matrix. 
+    cont_indices: ndarray of (n_features,)
+        Indication of continuous(True) or oridnal(False) variable decision. 
+    n_iter_: int
+        Number of iteration rounds that occurred. Will be less than self._max_iter if early stopping criterion was reached.
+    pseudo_likelihood: list of length n_iter_
+        The computed pseudo likelihood value at each iteration.
+    feature_names: ndarray of shape n_features
+        Names of features seen during fit. Defined only when X has feature names that are all strings.
 
     Methods
     -------
-    impute_missing:
+    fit(X)
         fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
-    impute_missing_online:
+    fit_transform(X)
         At each sequentially observed data batch, fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
+    get_params()
+        Get parameters for this estimator.
+    get_imputed_confidence_interval(alpha=0.95)
+        Get the confidence intervals for the imputed missing entries when all variables are continuous
+    get_reliability(Ximp=None, alpha=0.95)
+        Get the reliability, a relative quantity across all imputed entries, when either all variables are continuous or all variables are ordinal 
     '''
-    def __init__(self, var_types=None, max_ord=20):
+    def __init__(self, rank, cont_indices=None, max_ord=20, min_ord_ratio=0.1, tol=0.001, max_iter=50, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1):
         '''
-        The user can tell the model which variables are continuous and which are ordinal by the following two ways:
-        (1) input a dict var_types that contains valid assignmetns of cont_indices and ord_indices;
-        (2) input a max_ord so that the variables whose number of unique observation below max_ord will be treated as ordinal variables.
-        If both are provided, only var_types will be used.
-
-        Args:
-            var_types: dict
-            max_ord: int
-                When var_types is None, max_ord is used to automatically determine continuous variables and ordinal variables: variables 
-                whose number of observed unqiue values is larger than max_ord are regarded as continuous variables and others are regarded 
-                as ordinal variabels.
-        '''
-        super().__init__(var_types=var_types, max_ord=max_ord)
-        self.W = None
-        self.sigma = None
-
-    def impute_missing(self, X, rank, threshold=1e-3, max_iter=50, max_ord=20, verbose = False, seed=1):
-        """
-        Fits a low rank Gaussian Copula from incomplete data X and imputes the missing entries in X using the fitted model. 
-        The copula correlation matrix admits decomposition Sigma=sigma*I+A*t(A) where A has shape (p,rank) with rank<p. 
-        After estimating the model parameters W and sigma, a further step to update S (detemined by W, sigma, Z) is implemented 
-        for numerical stability.
-        Args:
-            X: numpy array of shape (n,p)
-                Incomplete data observation whose missing entries are needed to be imputed. One can also learn the Gaussian copula 
-                model from complete data X.
+        Parameters:
             rank: int
-                 the number of latent factors
-            threshold: float
-                the threshold for scaled difference between model parameters to terminate the model fitting
-            max_iter: int
-                the maximum number of EM iterations to run 
-            verbose: Boolean
-                Print the (pseudo)-likelihood value and copula correlation update ratio at each iteration
+                The number of the latent factors, i.e. the rank of the latent data generating space
+            cont_indices: list of bool or None, default=None
+                The indication of whether a variable should be treated as continuous(True) or ordinal(False) if not None. If None,
+                the decision will be decided based on max_ord and min_ord_ratio. 
+            max_ord: int, default=20
+                When cont_indices is None, variables whose number of unqiue observed values is larger than max_ord are regarded 
+                as continuous variables.
+            min_ord_ratio: float, default=0.1
+                When cont_indices is None, variables whose largest occurence ratio among unique values is smaller than min_ord_ratio 
+                are regarded as continuous variables.
+            tol: float, default=0.01
+                The convergence threshold. EM iterations will stop when the parameter update ratio is below this threshold.
+            max_iter: int, default=100
+                The number of EM iterations to perform.
+            random_state: int, default=101
+                Controls the randomness in generating latent ordinal values. Not used if there is no ordinal variable.
+            n_jobs: int, default=1
+                The number of jobs to run in parallel.
+            verbose: int, default=0
+                Controls the verbosity when fitting and predicting. 
+            num_ord_updates: int, default=1
+                Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
+                We do not recommend using value larger than 1 (the default value) at this moment. It will slow the speed without clear 
+                performance improvement.
+        '''
+        super().__init__(training_mode='standard', cont_indices=cont_indices, max_ord=max_ord, min_ord_ratio=min_ord_ratio, tol=tol, max_iter=max_iter, random_state=random_state, n_jobs=n_jobs, verbose=verbose, num_ord_updates=num_ord_updates)
+        self._rank = rank
+        self._W = None
+        self._sigma = None
+
+    def get_params(self):
+        '''
+        Get parameters for this estimator.
+
         Returns:
-            Dict
-                imputed_data: numpy array of shape (n,p)
-                    the imputed version of the input data X.
-                copula_factor_loading: numpy array of shape (p,rank)
-                    the estimated copula loading matrix for the latent factors.
-                copula_noise_ratio: florat from 0 to 1
-                    the estimated variance ratio of noise
-        """
+            params: dict
+        '''
+        # During the fitting process, all ordinal columns are moved to appear before all continuous columns
+        # Rearange the obtained results to go back to the original data ordering
+        _order = self.back_to_original_order()
+        params = {'copula_factor_loading': self._W[_order], 'copula_noise_ratio':self._sigma}
+        return params
+
+    def fit_offline(self,X):
+        '''
+        Implement fit for LRGC
+        '''
         if self.cont_indices is None:
-            self.cont_indices = self.get_cont_indices(X, self.max_ord)
+            self.cont_indices = self.get_cont_indices(X)
             self.ord_indices = ~self.cont_indices
 
         self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
         # TO DO: consider the order of W
-        Z, C, loglik = self._fit_covariance(X=X, rank=rank, threshold=threshold, max_iter=max_iter, verbose=verbose, seed=seed)
+        Z, C = self._fit_covariance(X)
         S = self._comp_S(Z) # re-estimate S to ensure numerical stability
-        Z_imp = self._impute(Z, S, self.W)
+        Z_imp = self._impute(Z, S, self._W)
         # 
         self._latent_Zimp = Z_imp
         self._latent_Cord = C
-
-        _order = self.back_to_original_order()
-        Z_imp_rearranged = Z_imp[:,_order]
-        X_imp = np.empty(X.shape)
-        if np.sum(self.cont_indices) > 0:
-            X_imp[:,self.cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
-        if np.sum(self.ord_indices) >0:
-            X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
-
-        return {'imputed_data':X_imp, 'copula_factor_loading':self.W, 'copula_noise_ratio':self.sigma}
-
 
     def _get_cond_std_missing(self):
         '''
@@ -112,7 +115,7 @@ class LowRankGaussianCopula(GaussianCopula):
         obs_loc = ~np.isnan(self.transform_function.X)
         std_cond[obs_loc] = np.nan
 
-        U,d,_ = np.linalg.svd(self.W, full_matrices=False)
+        U,d,_ = np.linalg.svd(self._W, full_matrices=False)
 
         for i,x_row in enumerate(self.transform_function.X):
             missing_indices = np.isnan(x_row)
@@ -123,9 +126,9 @@ class LowRankGaussianCopula(GaussianCopula):
                 # Ui_mis has dimension num_mis*k
                 Ui_mis = U[missing_indices]
                 # dUmis has dimension k*num_mis
-                dUmis = np.linalg.solve(np.diag(self.sigma*np.power(d, -2))+np.matmul(Ui_obs.T, Ui_obs), Ui_mis.T)
+                dUmis = np.linalg.solve(np.diag(self._sigma*np.power(d, -2))+np.matmul(Ui_obs.T, Ui_obs), Ui_mis.T)
 
-                _var = self.sigma * (1 + np.einsum('ij, ji -> i', Ui_mis, dUmis))
+                _var = self._sigma * (1 + np.einsum('ij, ji -> i', Ui_mis, dUmis))
                 if self._latent_Cord[i, obs_indices].sum()>0:
                     # dimension of num_obs*num_mis
                     Wobs_Mobs_inv_WmisT = np.matmul(Ui_obs, dUmis)
@@ -133,9 +136,7 @@ class LowRankGaussianCopula(GaussianCopula):
                 std_cond[i, missing_indices] = np.sqrt(_var)
         return std_cond
 
-
-
-    def _fit_covariance(self, X, rank, threshold=1e-3, max_iter=100, verbose = False, seed=1):
+    def _fit_covariance(self, X):
         """
         Estimate the covariance parameters of the low rank Gaussian copula, W and sigma, 
         using the data in X and return the estimates and related quantity. 
@@ -143,57 +144,53 @@ class LowRankGaussianCopula(GaussianCopula):
 
         Args:
             X (matrix): data matrix with entries to be imputed
-            rank: the rank for low rank Gaussian copula 
-            threshold (float): the threshold for scaled difference between covariance estimates at which to stop early
-            max_iter (int): the maximum number of iterations for copula estimation
-            verbose: print iteration information if true
         Returns:
-            W (matrix): an estimate of the latent coefficient matrix of the low rank Gaussian copula
-            sigma (scalar): an estimate of the latent noise variance of the low rank Gaussian copula
             Z (matrix): the transformed value, at observed continuous entry; the conditional mean, at observed ordinal entry; NA elsewhere
             C (matrix): 0 at observed continuous entry; the conditional variance, at observed ordinal entry; NA elsewhere
-            loglik: log likelihood during iterations, expected to increase every iteration, but possible that it does not (indicating bad fit)
         """
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, seed)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
         Z_cont = self.transform_function.get_cont_latent()
         Z = np.concatenate((Z_ord, Z_cont), axis=1)
 
         # Initialize Z_imp using truncated (low-rank) SVD for missing entries
         # to obtain initial parameter estimate
-        Z_imp = self._init_impute_svd(Z, rank, Z_ord_lower, Z_ord_upper)
+        Z_imp = self._init_impute_svd(Z, self._rank, Z_ord_lower, Z_ord_upper)
         corr = np.corrcoef(Z_imp, rowvar=False)
         u,d,_ = np.linalg.svd(corr, full_matrices=False)
-        sigma = np.mean(d[rank:])
-        W = u[:,:rank] * (np.sqrt(d[:rank] - sigma))
-        self.W, self.sigma = self._scale_corr(W, sigma)
-        if verbose:
-            print(f'Ater initialization, W has shape {self.W.shape} and sigma is {self.sigma}')
+        sigma = np.mean(d[self._rank:])
+        W = u[:,:self._rank] * (np.sqrt(d[:self._rank] - sigma))
+        self._W, self._sigma = self._scale_corr(W, sigma)
+        if self._verbose>0:
+            print(f'Ater initialization, W has shape {self._W.shape} and sigma is {self._sigma}')
 
         # Update entries at obseved ordinal locations from SVD initialization
         if sum(self.ord_indices)>0:
             Z_ord[~np.isnan(Z_ord)] = Z_imp[:,:sum(self.ord_indices)][~np.isnan(Z_ord)]
             Z = np.concatenate((Z_ord, Z_cont), axis=1)
 
-        loglik = []
-        for i in range(max_iter):
-            prev_W = self.W
-            W_new, sigma_new, C, iterloglik = self._em_step(Z, Z_ord_lower, Z_ord_upper) 
-            self.W, self.sigma = W_new, sigma_new
+        loglik = self.pseudo_likelihood
+        for i in range(self._max_iter):
+            prev_W = self._W
+            W_new, sigma_new, Z, C, iterloglik = self._em_step(Z, Z_ord_lower, Z_ord_upper) 
+            self._W, self._sigma = W_new, sigma_new
             # stop early if the change in the correlation estimation is below the threshold
             loglik.append(iterloglik) 
-            err = self._get_scaled_diff(prev_W, self.W)
+            err = self._get_scaled_diff(prev_W, self._W)
 
-            if err < threshold:
-                return Z, C, loglik
+            if err < self._threshold:
+                break
             if len(loglik) > 1 and self._get_scaled_diff(loglik[-2], loglik[-1]) < 0.01:
-                if verbose: 
+                if self._verbose>0: 
                     print('early stop because changed likelihood below 1%')
-                return Z, C, loglik
-            if verbose:
-                print(f'Interation {i+1}: sigma estimate {self.sigma:.3f}, copula  parameter change ratio {err:.3f}, likelihood {iterloglik:.3f}')
+                break
+            if self._verbose>0:
+                print(f'Interation {i+1}: noise ratio estimate {self._sigma:.3f}, copula parameter update ratio {err:.3f}, likelihood {iterloglik:.3f}')
 
-        return Z, C, loglik
+        if self._verbose>0 and i == self._max_iter-1: 
+            print("Convergence not achieved at maximum iterations")
+        self.n_iter_ = i+1
+        return Z, C
 
 
     def _comp_S(self, Z):
@@ -206,7 +203,7 @@ class LowRankGaussianCopula(GaussianCopula):
         Returns:
             S: a factor used for imputation
         """
-        W, sigma = self.W, self.sigma
+        W, sigma = self._W, self._sigma
         n, k = Z.shape[0], W.shape[1]
         U, d, _ = np.linalg.svd(W, full_matrices=False)
         S = np.zeros((n,k))
@@ -247,7 +244,6 @@ class LowRankGaussianCopula(GaussianCopula):
             Z (matrix): the transformed value, at observed continuous entry; 
                         initial conditional mean, at observed ordinal entry (will be updated during iteration); NA elsewhere
             r_lower, r_upper (matrix): the lower and upper bounds for con
-            W, sigma: initial estimate for low rank Gaussian copula parameters
         Returns:
             W (matrix): an estimate of the latent coefficient matrix of the low rank Gaussian copula
             sigma (scalar): an estimate of the latent noise variance of the low rank Gaussian copula
@@ -255,9 +251,9 @@ class LowRankGaussianCopula(GaussianCopula):
             loglik: log likelihood during iterations, expected to increase every iteration, but possible that it does not (indicating bad fit)
 
         """
-        assert len(self.W.shape)==2, f'invalid W shape {self.W.shape}'
+        assert len(self._W.shape)==2, f'invalid W shape {self._W.shape}'
         n,p = Z.shape
-        W, sigma = self.W, self.sigma
+        W, sigma = self._W, self._sigma
         rank = W.shape[1]
         if r_lower.shape[1] == 0:
             num_ord = 0
@@ -314,7 +310,7 @@ class LowRankGaussianCopula(GaussianCopula):
             si = np.dot(AU, zi_obs)
             S[i,:] = si
             SS[i,:,:] = np.dot(AU * C[i, obs_indices], AU.T) + np.outer(si, si.T)
-            negloglik = negloglik + np.log(sigma) * p + np.log(np.linalg.det(np.identity(rank) + np.outer(d/sigma, d) * UU_obs))
+            negloglik = negloglik + np.log(sigma) * p + np.linalg.slogdet(np.identity(rank) + np.outer(d/sigma, d) * UU_obs)[1]
             negloglik = negloglik + np.sum(zi_obs**2) - np.dot(zi_obs.T, np.dot(Ui_obs, si))
 
         #print(negloglik)
@@ -349,7 +345,7 @@ class LowRankGaussianCopula(GaussianCopula):
         W, sigma = self._scale_corr(W_new, sigma_new)
         #print(sigma)
         loglik = -negloglik/2.0
-        return W, sigma, C, loglik
+        return W, sigma, Z, C, loglik/n
 
 
 

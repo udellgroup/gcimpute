@@ -2,6 +2,7 @@ Examples/.ipynb_checkpoints/
 Examples/sanity_check.py
 Examples/test.ipynb
 myvenv/
+GaussianCopulaImp/.DS_Store
 .DS_Store
 .vs*
 *.csv

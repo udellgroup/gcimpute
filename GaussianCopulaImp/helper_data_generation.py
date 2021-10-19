@@ -1,5 +1,7 @@
 import numpy as np 
 from scipy.stats import random_correlation, norm, expon
+import pkg_resources
+import pandas as pd
 
 def _cont_to_ord(x, k, by = 'dist', seed=1, q_min=0.05, q_max=0.95):
     """
@@ -23,7 +25,7 @@ def _cont_to_ord(x, k, by = 'dist', seed=1, q_min=0.05, q_max=0.95):
         cutoffs = np.random.choice(x[select], k-1, replace = False)
     else:
         raise ValueError('Unsupported cutoff_by option')
-    ords = np.digitize(x, cutoffs)
+    ords = np.digitize(x, np.sort(cutoffs))
     return ords
 
 
@@ -101,3 +103,12 @@ def generate_mixed_from_gc(sigma, n=2000, seed=1, var_types = {'cont':list(range
     for ind in bin_index:
         X[:,ind] = cont_to_ord(X[:,ind], k=2, by=cutoff_by)
     return X
+
+def load_GSS(to_array = False):
+    '''
+    Return a subset of General social survey (GSS) datasets selected in year 2014, consisting of 18 variables and 2538 subjects.
+    '''
+    stream = pkg_resources.resource_stream(__name__, 'data/GSS_2014_18var.csv')
+    data = pd.read_csv(stream, index_col=0)
+    return np.array(data) if to_array else data
+
