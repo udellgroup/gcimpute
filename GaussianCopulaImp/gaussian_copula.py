@@ -4,9 +4,9 @@ from .embody import _em_step_body_, _em_step_body, _em_step_body_row
 from scipy.stats import norm, truncnorm
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
-import warnings
 from scipy.linalg import svdvals
 from collections import defaultdict
+import warnings
 
 class GaussianCopula():
     '''
@@ -21,7 +21,7 @@ class GaussianCopula():
         Indication of continuous(True) or oridnal(False) variable decision. 
     n_iter_: int
         Number of iteration rounds that occurred. Will be less than self._max_iter if early stopping criterion was reached.
-    pseudo_likelihood: list of length n_iter_
+    likelihood: list of length n_iter_
         The computed pseudo likelihood value at each iteration.
     feature_names: ndarray of shape n_features
         Names of features seen during fit. Defined only when X has feature names that are all strings.
@@ -44,7 +44,7 @@ class GaussianCopula():
 
     '''
 
-    def __init__(self, training_mode='standard', stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, batch_size=100, window_size=200, cont_indices=None, max_ord=20, min_ord_ratio=0.1, tol=0.01, max_iter=50, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, corr_diff_type='F'):
+    def __init__(self, training_mode='standard', stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, batch_size=100, window_size=200, min_ord_ratio=0.1, tol=0.001, likelihood_min_increase=0.01, max_iter=50, num_pass=2, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, corr_diff_type='F'):
         '''
         Parameters:
             training_mode: {'standard', 'minibatch-offline', 'minibatch-online'}, default='standard'
@@ -63,19 +63,16 @@ class GaussianCopula():
                 The number of data points in each mini-batch. Only used for offline mini-batch training.
             window_size: int, default=200
                 The lookback window length for online marginal estimate. Only used when training_mode = 'minibatch-online'.  
-            cont_indices: list of bool or None, default=None
-                The indication of whether a variable should be treated as continuous(True) or ordinal(False) if not None. If None,
-                the decision will be decided based on max_ord and min_ord_ratio. 
-            max_ord: int, default=20
-                When cont_indices is None, variables whose number of unqiue observed values is larger than max_ord are regarded 
-                as continuous variables.
             min_ord_ratio: float, default=0.1
-                When cont_indices is None, variables whose largest occurence ratio among unique values is smaller than min_ord_ratio 
-                are regarded as continuous variables.
-            tol: float, default=0.01
+                When cont_indices is None when the calling fit, variables whose mode occurence ratio is smaller than min_ord_ratio are regarded as continuous variables.
+            tol: float, default=0.001
                 The convergence threshold. EM iterations will stop when the parameter update ratio is below this threshold.
-            max_iter: int, default=100
+            likelihood_min_increase: float, default=0.01
+                The minimal likelihood increase ratio required to keep running the EM algorithm.
+            max_iter: int, default=30
                 The number of EM iterations to perform.
+            num_pass: int or None, default=2
+                Only used when training_mode='minibatch-offline'. Used to set max_iter.
             random_state: int, default=101
                 Controls the randomness in generating latent ordinal values. Not used if there is no ordinal variable.
             n_jobs: int, default=1
@@ -126,40 +123,42 @@ class GaussianCopula():
         self._window_size = window_size
         self._corr_diff_type = corr_diff_type
 
-        if cont_indices is not None:
-            cont_indices = [bool(x) for x in cont_indices]
-            self.cont_indices = np.array(cont_indices)
-            self.ord_indices = ~self.cont_indices
-        else:
-            self.cont_indices = None
-            self.ord_indices = None 
-        self._max_ord = max_ord
+        # TODO: unify the use of integer indexing and boolean indexing so that we only need one pair of the following
+        self._cont_indices = None
+        self._ord_indices = None 
+        self.cont_indices = None
+        self.ord_indices = None 
         self._min_ord_ratio = min_ord_ratio
         
         self._seed = random_state
         self._threshold = tol
+        self._likel_threshold = likelihood_min_increase
         self._max_iter = max_iter
         self._max_workers = n_jobs
         self._verbose = verbose
         self._num_ord_updates = num_ord_updates
+        self._num_pass = num_pass
 
         # model parameter
         self._corr = None
         
         # attributes
         self.n_iter_ = 0
-        self.pseudo_likelihood = []
+        self.likelihood = []
         self.features_names = None
         self.corr_diff = []
 
 
-    def fit(self, X):
+    def fit(self, X, cont_indices = None):
         '''
         Fits the Gaussian copula imputer on the input data X.
 
         Parameters:
             X: array-like of shape (n_samples, n_features)
                 Input data
+            cont_indices: array-list of int, optional (default=None)
+                If not None, the set of continuout variable indices. 
+                If None, the continuout variable indices will be determined by self.min_ord_ratio.
         '''
         if self._training_mode == 'minibatch-online':
             print('fit method is not implemented for minibatch-online mode, since the fitting and imputation are done in the unit of mini-batch. To impute the missing entries, call fit_transform.')
@@ -167,21 +166,29 @@ class GaussianCopula():
         else:
             return self.fit_offline(X)
 
-    def fit_transform(self, X):
+    def fit_transform(self, X, cont_indices = None):
         '''
-        Fit to data, then transform it.
+        Fit to data, then transform it. 
+        For 'minibatch-online' mode, the variable types are set in this function call since the fit and transformation are done in an alternative fashion.
+        For the other two modes, the variable types are set in the function fit_offline.
 
         Parameters:
             X: array-like of shape (n_samples, n_features)
                 Input data
+            cont_indices: array-list of int, optional (default=None)
+                If not None, the set of continuout variable indices. 
+                If None, the continuout variable indices will be determined by self.min_ord_ratio.
         Returns:
             Ximp: array-like of shape (n_samples, n_features)
                 The imputed input data
         '''
         if self._training_mode == 'minibatch-online':
+            self.set_indices(X, cont_indices)
+            if hasattr(X, 'columns'):
+                self.features_names = np.array(X.columns.to_list())
             return self.fit_transform_online(X)
         else:
-            return self.fit_transform_offline(X)
+            return self.fit_transform_offline(X, cont_indices)
 
     def get_params(self):
         '''
@@ -203,7 +210,7 @@ class GaussianCopula():
         '''
         if self._training_mode == 'minibatch-online':
             raise NotImplementedError('Confidence interval has not yet been supported for minibatch-online mode')
-        assert all(self.cont_indices), 'confidence interval is only available for datasets with all continuous variables'
+        assert all(self._cont_indices), 'confidence interval is only available for datasets with all continuous variables'
         try:
             Zimp = self._latent_Zimp
         except AttributeError:
@@ -230,53 +237,51 @@ class GaussianCopula():
         Get the reliability of imputed entries. The notion of reliability is a relative quantity across all imputed entries.
         Entries with higher reliability are more likely to have small imputation error. 
         '''
-        if all(self.cont_indices):
+        if all(self._cont_indices):
             return self.get_reliability_cont(Ximp, alpha)
-        elif all(self.ord_indices):
+        elif all(self._ord_indices):
             return self.get_reliability_ord()
         else:
             raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
 
 
-    def fit_offline(self, X):
+    def fit_offline(self, X, cont_indices):
         '''
         Implement fit when the training mode is 'standard' or 'minibatch-offline'
         '''
-        if self.cont_indices is None:
-            self.cont_indices = self.get_cont_indices(X)
-            self.ord_indices = ~self.cont_indices
-
-        #self._fit_initial_transformation(X, window_size)
-        self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
+        if hasattr(X, 'columns'):
+            self.features_names = np.array(X.columns.to_list())
+        X = np.array(X)
+        self.set_indices(X, cont_indices)
+        self.transform_function = TransformFunction(X, self._cont_indices, self._ord_indices)
         Z_imp, C_ord = self._fit_covariance(X)
 
         # attributes to store after model fitting
         self._latent_Zimp = Z_imp
         self._latent_Cord = C_ord
 
-    def fit_transform_offline(self, X):
+    def fit_transform_offline(self, X, cont_indices):
         '''
         Implement fit_transform when the training mode is 'standard' or 'minibatch-offline'
         '''
-        X = np.array(X)
-        self.fit_offline(X)
+        self.fit_offline(X, cont_indices)
         # During the fitting process, all ordinal columns are moved to appear before all continuous columns
         # Rearange the obtained results to go back to the original data ordering
         _order = self.back_to_original_order()
         Z_imp_rearranged = self._latent_Zimp[:,_order]
         X_imp = np.empty(X.shape)
-        if np.sum(self.cont_indices) > 0:
-            X_imp[:,self.cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
-        if np.sum(self.ord_indices) >0:
-            X_imp[:,self.ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
+        if np.sum(self._cont_indices) > 0:
+            X_imp[:,self._cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
+        if np.sum(self._ord_indices) >0:
+            X_imp[:,self._ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
         return X_imp
 
     def fit_transform_online(self, X, corr_diff=['F']):
         '''
         Implement fit_transform when the training mode is 'minibatch-online'
         '''
-        assert self.cont_indices is not None, 'Variable types must be provided through cont_indices for online fit'
-        self.transform_function = OnlineTransformFunction(self.cont_indices, self.ord_indices, window_size=self._window_size)
+        X = np.array(X)
+        self.transform_function = OnlineTransformFunction(self._cont_indices, self._ord_indices, window_size=self._window_size)
         n,p = X.shape
         X_imp = np.zeros_like(X)
         self._corr = np.identity(p)
@@ -309,30 +314,40 @@ class GaussianCopula():
             Z_imp (matrix): estimates of latent values
         """
         n,p = X.shape
-        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
-        Z_cont = self.transform_function.get_cont_latent()
 
-        Z_imp = np.concatenate((Z_ord,Z_cont), axis=1)
+        # Initialize 
+        Z, _, _ = self._init_latent()
         # mean impute the missing continuous values for the sake of covariance estimation
+        Z_imp = Z.copy()
         Z_imp[np.isnan(Z_imp)] = 0.0
+
         # initialize the correlation matrix
         self._corr = np.corrcoef(Z_imp, rowvar=False)
-        # Latent variable matrix with columns sorted as ordinal, continuous
-        Z = np.concatenate((Z_ord, Z_cont), axis=1)
+
 
         # permutation of indices of data for stochastic fitting
         np.random.seed(self._seed)
-        training_permutation = np.random.permutation(n)
-        loglik = self.pseudo_likelihood
-        for i in range(self._max_iter):
-            # track the change ratio of copula correlation for the purpose of early stopping
+        training_permutation = np.random.permutation(X.shape[0])
+
+        # determine the maximal iteraitons to run        
+        if self._training_mode=='minibatch-offline' and self._num_pass is not None:
+            max_iter = (np.ceil(n/self._batch_size) * self._num_pass).astype(np.int32)
+            if self._verbose>0:
+                print(f'The number of maximum iteration is set as {max_iter} to have {self._num_pass} passes over all data')
+        else:
+            max_iter = self._max_iter
+
+        loglik = self.likelihood
+        converged = False
+        for i in range(max_iter):
+            # track the change ratio of copula correlation as stopping criterion
             prev_corr = self._corr
             if np.isnan(prev_corr).any():
                 raise ValueError(f'Unexpected nan in updated copula correlation at iteration {i}')
 
-            # standard EM: each iteration uses all data points
+            # run EM iterations
             if self._training_mode == 'standard':
+                # standard EM: each iteration uses all data points
                 corr, Z_imp, Z, C_ord, iterloglik = self._em_step(Z, Z_ord_lower, Z_ord_upper)
                 self._corr = corr
             else:
@@ -349,29 +364,21 @@ class GaussianCopula():
                 Z[indices] = Z_batch
                 step_size = self.stepsize(i+1)
                 self._corr = corr*step_size + (1 - step_size)*prev_corr
-            
-            loglik.append(iterloglik)
-            if self._training_mode == 'standard' and len(loglik)>1:
-                change_ratio = self._get_scaled_diff(loglik[-2], loglik[-1])
-                if change_ratio<0.01:
-                    if self._verbose>0: 
-                        print('early stop because changed likelihood below 1%')
-                    break
-                
-            # stop early if the change in the correlation estimation is below the threshold
+
+            # stop if the change in the correlation estimation is below the threshold
             corrudpate = self._get_scaled_diff(prev_corr, self._corr)
             if self._verbose>0:
-                print(f"Iteration {i+1}: copula correlation update ratio {corrudpate:.3f}, likelihood {iterloglik:.3f}")
-                print("Copula correlation change ratio: ", np.round(corrudpate, 4))
+                print(f"Iteration {i+1}: copula correlation update ratio {corrudpate:.4f}, likelihood {iterloglik:.4f}")
+            
+            # append new likelihood and determine if early stopping criterion is satisfied
+            converged = self._update_loglikelihood(iterloglik)
+                
             if corrudpate < self._threshold:
-                if self._verbose>0:
-                    print(f"Convergence achieved at iteration {i+1}")
-                    
+                converged = True
                 break
                 
-        if self._verbose>0 and i == self._max_iter-1: 
-            print("Convergence not achieved at maximum iterations")
-        self.n_iter_ = i+1
+        # store the number of iterations and print if converged
+        self._set_n_iter(converged, i)
         return  Z_imp, C_ord
 
 
@@ -406,7 +413,7 @@ class GaussianCopula():
         Z_cont = self.transform_function.partial_evaluate_cont_latent(X_batch) 
         Z = np.concatenate((Z_ord, Z_cont), axis=1)
         corr, Z_imp, Z, C_ord, loglik = self._em_step(Z, Z_ord_lower, Z_ord_upper)
-        self.pseudo_likelihood.append(loglik)
+        self.likelihood.append(loglik)
 
         prev_corr = self._corr
         if corr_update:
@@ -417,8 +424,8 @@ class GaussianCopula():
         _order = self.back_to_original_order()
         Z_imp_rearranged = Z_imp[:,_order]
         X_imp = np.empty(Z_imp.shape)
-        X_imp[:,self.cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged, X_batch)
-        X_imp[:,self.ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged, X_batch)
+        X_imp[:,self._cont_indices] = self.transform_function.partial_evaluate_cont_observed(Z_imp_rearranged, X_batch)
+        X_imp[:,self._ord_indices] = self.transform_function.partial_evaluate_ord_observed(Z_imp_rearranged, X_batch)
         return {'imputed':X_imp, 'corr_diff':diff}
 
     def _em_step(self, Z, r_lower, r_upper):
@@ -612,6 +619,21 @@ class GaussianCopula():
 
         return np.linalg.norm(sigma - prev_sigma) / np.linalg.norm(sigma)
 
+    def set_indices(self, X, cont_indices=None):
+        '''
+        set variable types
+        '''
+        all_indices = np.arange(X.shape[1])
+        if cont_indices is None:
+            self._cont_indices = self.get_cont_indices(X)
+        else:
+            p = X.shape[1]
+            self._cont_indices = np.array([x in cont_indices for x in all_indices])
+        self._ord_indices = ~self._cont_indices
+
+        self.cont_indices = all_indices[self._cont_indices]
+        self.ord_indices = all_indices[self._ord_indices]
+
     def get_cont_indices(self, X):
         """
         get's the indices of continuos columns by returning
@@ -628,19 +650,49 @@ class GaussianCopula():
             obs = ~np.isnan(x)
             x = x[obs]
             uniques, counts = np.unique(x, return_counts=True)
-            below_max_ord = len(uniques) <= self._max_ord
+            #below_max_ord = len(uniques) <= self._max_ord
             above_min_ord_ratio = (counts.max()/len(x)) >= self._min_ord_ratio
-            return above_min_ord_ratio or below_max_ord
+            return above_min_ord_ratio 
 
         indices = np.array([not is_ord(col) for col in X.T])
         return indices
 
+
+    def _init_latent(self):
+        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z_cont = self.transform_function.get_cont_latent()
+        Z = np.concatenate((Z_ord, Z_cont), axis=1)
+        return Z, Z_ord_lower, Z_ord_upper
+
+    def _update_loglikelihood(self, iterloglik):
+        converged = False
+        loglik = self.likelihood
+        loglik.append(iterloglik)
+        if self._training_mode == 'standard' and len(loglik)>1 and loglik[-1] >= loglik[-2]:
+            change_ratio = self._get_scaled_diff(loglik[-2], loglik[-1])
+            if change_ratio<self._likel_threshold:
+                if self._verbose>0: 
+                    print(f'early stop because the likelihood increase is below {self._likel_threshold}')
+                converged = True
+        return converged
+
+
+    def _set_n_iter(self, converged, i):
+        if self._verbose>0: 
+            if not converged:
+                print("Convergence not achieved at maximum iterations")
+            else:
+                print(f"Convergence achieved at iteration {i+1}")
+        self.n_iter_ = i+1
+
+
     def back_to_original_order(self):
         #mapping = {}
-        num_ord = self.ord_indices.sum()
+        num_ord = self._ord_indices.sum()
         seen_cont = seen_ord = 0
         orders = [] 
-        for i,index in enumerate(self.cont_indices):
+        for i,index in enumerate(self._cont_indices):
             if index:
                 #mapping[seen_cont] = i
                 orders.append(seen_cont+num_ord)

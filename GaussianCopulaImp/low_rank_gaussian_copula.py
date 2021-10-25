@@ -2,6 +2,7 @@ from .transform_function import TransformFunction
 from .gaussian_copula import GaussianCopula
 from scipy.stats import norm, truncnorm
 import numpy as np
+import warnings
 
 
 class LowRankGaussianCopula(GaussianCopula):
@@ -18,7 +19,7 @@ class LowRankGaussianCopula(GaussianCopula):
         Indication of continuous(True) or oridnal(False) variable decision. 
     n_iter_: int
         Number of iteration rounds that occurred. Will be less than self._max_iter if early stopping criterion was reached.
-    pseudo_likelihood: list of length n_iter_
+    likelihood: list of length n_iter_
         The computed pseudo likelihood value at each iteration.
     feature_names: ndarray of shape n_features
         Names of features seen during fit. Defined only when X has feature names that are all strings.
@@ -36,22 +37,18 @@ class LowRankGaussianCopula(GaussianCopula):
     get_reliability(Ximp=None, alpha=0.95)
         Get the reliability, a relative quantity across all imputed entries, when either all variables are continuous or all variables are ordinal 
     '''
-    def __init__(self, rank, cont_indices=None, max_ord=20, min_ord_ratio=0.1, tol=0.001, max_iter=50, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1):
+    def __init__(self, rank, min_ord_ratio=0.1, tol=0.001, likelihood_min_increase=0.01, max_iter=50, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1):
         '''
         Parameters:
             rank: int
                 The number of the latent factors, i.e. the rank of the latent data generating space
-            cont_indices: list of bool or None, default=None
-                The indication of whether a variable should be treated as continuous(True) or ordinal(False) if not None. If None,
-                the decision will be decided based on max_ord and min_ord_ratio. 
-            max_ord: int, default=20
-                When cont_indices is None, variables whose number of unqiue observed values is larger than max_ord are regarded 
-                as continuous variables.
             min_ord_ratio: float, default=0.1
                 When cont_indices is None, variables whose largest occurence ratio among unique values is smaller than min_ord_ratio 
                 are regarded as continuous variables.
             tol: float, default=0.01
                 The convergence threshold. EM iterations will stop when the parameter update ratio is below this threshold.
+            likelihood_min_increase: float, default=0.01
+                The minimal likelihood increase ratio required to keep running the EM algorithm.
             max_iter: int, default=100
                 The number of EM iterations to perform.
             random_state: int, default=101
@@ -65,7 +62,7 @@ class LowRankGaussianCopula(GaussianCopula):
                 We do not recommend using value larger than 1 (the default value) at this moment. It will slow the speed without clear 
                 performance improvement.
         '''
-        super().__init__(training_mode='standard', cont_indices=cont_indices, max_ord=max_ord, min_ord_ratio=min_ord_ratio, tol=tol, max_iter=max_iter, random_state=random_state, n_jobs=n_jobs, verbose=verbose, num_ord_updates=num_ord_updates)
+        super().__init__(training_mode='standard', min_ord_ratio=min_ord_ratio, tol=tol, max_iter=max_iter, random_state=random_state, n_jobs=n_jobs, verbose=verbose, num_ord_updates=num_ord_updates)
         self._rank = rank
         self._W = None
         self._sigma = None
@@ -83,22 +80,6 @@ class LowRankGaussianCopula(GaussianCopula):
         params = {'copula_factor_loading': self._W[_order], 'copula_noise_ratio':self._sigma}
         return params
 
-    def fit_offline(self,X):
-        '''
-        Implement fit for LRGC
-        '''
-        if self.cont_indices is None:
-            self.cont_indices = self.get_cont_indices(X)
-            self.ord_indices = ~self.cont_indices
-
-        self.transform_function = TransformFunction(X, self.cont_indices, self.ord_indices)
-        # TO DO: consider the order of W
-        Z, C = self._fit_covariance(X)
-        S = self._comp_S(Z) # re-estimate S to ensure numerical stability
-        Z_imp = self._impute(Z, S, self._W)
-        # 
-        self._latent_Zimp = Z_imp
-        self._latent_Cord = C
 
     def _get_cond_std_missing(self):
         '''
@@ -148,14 +129,18 @@ class LowRankGaussianCopula(GaussianCopula):
             Z (matrix): the transformed value, at observed continuous entry; the conditional mean, at observed ordinal entry; NA elsewhere
             C (matrix): 0 at observed continuous entry; the conditional variance, at observed ordinal entry; NA elsewhere
         """
-        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
-        Z_cont = self.transform_function.get_cont_latent()
-        Z = np.concatenate((Z_ord, Z_cont), axis=1)
+        Z, Z_ord_lower, Z_ord_upper = self._init_latent()
 
-        # Initialize Z_imp using truncated (low-rank) SVD for missing entries
-        # to obtain initial parameter estimate
-        Z_imp = self._init_impute_svd(Z, self._rank, Z_ord_lower, Z_ord_upper)
+        # Refine Z_imp using truncated (low-rank) SVD for missing entries to obtain initial parameter estimate
+        Z_imp = Z.copy()
+        Z_imp = self._init_impute_svd(Z_imp, self._rank, Z_ord_lower, Z_ord_upper)
+        # Form latent variable matrix
+        # Update entries at obseved ordinal locations from SVD initialization
+        if any(self.ord_indices):
+            obs_ord = ~np.isnan(Z_ord_lower)
+            Z[:,:sum(self.ord_indices)][obs_ord] = Z_imp[:,:sum(self.ord_indices)][obs_ord].copy()
+
+        # initialize the parameter estimate 
         corr = np.corrcoef(Z_imp, rowvar=False)
         u,d,_ = np.linalg.svd(corr, full_matrices=False)
         sigma = np.mean(d[self._rank:])
@@ -164,33 +149,32 @@ class LowRankGaussianCopula(GaussianCopula):
         if self._verbose>0:
             print(f'Ater initialization, W has shape {self._W.shape} and sigma is {self._sigma}')
 
-        # Update entries at obseved ordinal locations from SVD initialization
-        if sum(self.ord_indices)>0:
-            Z_ord[~np.isnan(Z_ord)] = Z_imp[:,:sum(self.ord_indices)][~np.isnan(Z_ord)]
-            Z = np.concatenate((Z_ord, Z_cont), axis=1)
-
-        loglik = self.pseudo_likelihood
+        converged = False
         for i in range(self._max_iter):
             prev_W = self._W
+
+            # run EM iteration
             W_new, sigma_new, Z, C, iterloglik = self._em_step(Z, Z_ord_lower, Z_ord_upper) 
             self._W, self._sigma = W_new, sigma_new
-            # stop early if the change in the correlation estimation is below the threshold
-            loglik.append(iterloglik) 
-            err = self._get_scaled_diff(prev_W, self._W)
 
-            if err < self._threshold:
-                break
-            if len(loglik) > 1 and self._get_scaled_diff(loglik[-2], loglik[-1]) < 0.01:
-                if self._verbose>0: 
-                    print('early stop because changed likelihood below 1%')
-                break
+            # stop if the change in the parameter estimation is below the threshold
+            wupdate = self._get_scaled_diff(prev_W, self._W)
             if self._verbose>0:
-                print(f'Interation {i+1}: noise ratio estimate {self._sigma:.3f}, copula parameter update ratio {err:.3f}, likelihood {iterloglik:.3f}')
+                print(f'Interation {i+1}: noise ratio estimate {self._sigma:.4f}, copula parameter update ratio {wupdate:.4f}, likelihood {iterloglik:.4f}')
 
-        if self._verbose>0 and i == self._max_iter-1: 
-            print("Convergence not achieved at maximum iterations")
-        self.n_iter_ = i+1
-        return Z, C
+            # append new likelihood and determine if early stopping criterion is satisfied
+            converged = self._update_loglikelihood(iterloglik)
+
+            if wupdate < self._threshold:
+                converged = True
+                break
+
+        # store the number of iterations and print if converged
+        self._set_n_iter(converged, i)
+
+        S = self._comp_S(Z) # re-estimate S to ensure numerical stability
+        Z_imp = self._impute(Z, S, self._W)
+        return Z_imp, C
 
 
     def _comp_S(self, Z):
@@ -426,6 +410,8 @@ class LowRankGaussianCopula(GaussianCopula):
         X_imp = np.empty(X.shape)
         X_imp = self.transform_function.impute_cont_observed(Z_imp)
         return X_imp
+
+
 
 
 

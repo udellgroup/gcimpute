@@ -79,10 +79,12 @@ def generate_LRGC(var_types, rank, sigma, n=500, ord_num=5, cont_transform=lambd
     return X_true, W
 
 
-def generate_mixed_from_gc(sigma, n=2000, seed=1, var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}, cutoff_by='dist'):
+def generate_mixed_from_gc(sigma=None, n=2000, seed=1, var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}, cutoff_by='dist'):
     '''
     sigma: either a single correlation matrix or a list of correlation matrices
     '''
+    if sigma is None:
+        sigma = generate_sigma(seed = seed, p = sum([len(x) for x in var_types.values()]))
     if not isinstance(sigma, list):
         sigma = [sigma]
     cont_index = var_types['cont']
@@ -104,11 +106,18 @@ def generate_mixed_from_gc(sigma, n=2000, seed=1, var_types = {'cont':list(range
         X[:,ind] = cont_to_ord(X[:,ind], k=2, by=cutoff_by)
     return X
 
-def load_GSS(to_array = False):
+def load_GSS(cols=None, to_array = False):
     '''
     Return a subset of General social survey (GSS) datasets selected in year 2014, consisting of 18 variables and 2538 subjects.
     '''
     stream = pkg_resources.resource_stream(__name__, 'data/GSS_2014_18var.csv')
     data = pd.read_csv(stream, index_col=0)
+    _cols = data.columns.tolist()
+    if cols is not None:  
+        try:
+            data = data[cols]
+        except KeyError:
+            print(f'{cols} must be a subset of {_cols}')
+            raise
     return np.array(data) if to_array else data
 
