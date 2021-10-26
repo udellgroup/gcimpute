@@ -35,7 +35,6 @@ def run_onerep(seed, n=2000, batch_size= 40, batch_c=0, max_iter=50, online=Fals
 			training_mode = 'standard'
 			stepsize_func = None
 	gc = GaussianCopula(training_mode=training_mode, stepsize_func=stepsize_func, const_stepsize=None, batch_size=batch_size, 
-		cont_indices=cont_indices, 
 		tol=threshold, max_iter=max_iter, 
 		random_state=seed, n_jobs=max_workers)
 	X_imp = gc.fit_transform(X_masked)

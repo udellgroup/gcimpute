@@ -316,7 +316,7 @@ class GaussianCopula():
         n,p = X.shape
 
         # Initialize 
-        Z, _, _ = self._init_latent()
+        Z, Z_ord_lower, Z_ord_upper = self._init_latent()
         # mean impute the missing continuous values for the sake of covariance estimation
         Z_imp = Z.copy()
         Z_imp[np.isnan(Z_imp)] = 0.0
