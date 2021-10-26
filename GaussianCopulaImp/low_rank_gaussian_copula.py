@@ -1,9 +1,10 @@
 from .transform_function import TransformFunction
 from .gaussian_copula import GaussianCopula
+from .embody import _LRGC_em_col_step_body_, _LRGC_em_row_step_body_
 from scipy.stats import norm, truncnorm
 import numpy as np
 import warnings
-
+from concurrent.futures import ProcessPoolExecutor
 
 class LowRankGaussianCopula(GaussianCopula):
     '''
@@ -220,116 +221,72 @@ class LowRankGaussianCopula(GaussianCopula):
             Zimp[i,index_m] =  np.dot(U[index_m,:], S[i,:])
         return Zimp
 
-
     def _em_step(self, Z, r_lower, r_upper):
-        """
-        EM algorithm to estimate the low rank Gaussian copula, W and sigma.
-        Args:
-            Z (matrix): the transformed value, at observed continuous entry; 
-                        initial conditional mean, at observed ordinal entry (will be updated during iteration); NA elsewhere
-            r_lower, r_upper (matrix): the lower and upper bounds for con
-        Returns:
-            W (matrix): an estimate of the latent coefficient matrix of the low rank Gaussian copula
-            sigma (scalar): an estimate of the latent noise variance of the low rank Gaussian copula
-            C (matrix): 0 at observed continuous entry; the conditional variance, at observed ordinal entry; NA elsewhere
-            loglik: log likelihood during iterations, expected to increase every iteration, but possible that it does not (indicating bad fit)
-
-        """
-        assert len(self._W.shape)==2, f'invalid W shape {self._W.shape}'
         n,p = Z.shape
+        assert len(self._W.shape)==2, f'invalid W shape {self._W.shape}'
+        assert n>0, 'EM step receives empty input'
         W, sigma = self._W, self._sigma
+        max_workers = self._max_workers
+        num_ord_updates = self._num_ord_updates
+
         rank = W.shape[1]
-        if r_lower.shape[1] == 0:
-            num_ord = 0
-        else:
-            num_ord = r_lower.shape[1]
-        negloglik = 0
+        num_ord = r_lower.shape[1]
         U,d,V = np.linalg.svd(W, full_matrices=False)
-        A = np.zeros((n, rank, rank))
-        SS = np.copy(A)
-        S = np.zeros((n,rank))
-        C = np.zeros((n,p))
 
-        # The main loop for the E step, parallelize this later
-        for i in range(n):
-            # indexing
-            obs_indices = np.nonzero(~np.isnan(Z[i,:]))[0]
-            ord_in_obs = np.nonzero(obs_indices < num_ord)
-            ord_obs_indices = obs_indices[ord_in_obs]
-            
+        if max_workers == 1:
+            args = (Z, r_lower, r_upper, U, d, sigma, num_ord_updates)
+            Z, A, S, SS, C_ord, loglik, s_row = _LRGC_em_row_step_body_(args)
+            args = (Z, C_ord, U, sigma, A, S, SS)
+            W_new, s_col = _LRGC_em_col_step_body_(args)
+        else:
+            # computation across rows
+            divide = n/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [(
+                    Z[divide[i]:divide[i+1],:].copy(), 
+                    r_lower[divide[i]:divide[i+1],:], 
+                    r_upper[divide[i]:divide[i+1],:], 
+                    U, d, sigma, num_ord_updates
+                    ) for i in range(max_workers)]
+            A = np.zeros((n,rank,rank))
+            S = np.zeros((n,rank))
+            SS = np.zeros_like(A)
+            C_ord = np.zeros_like(Z)
+            loglik = 0
+            s_row = 0
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                res = pool.map(_LRGC_em_row_step_body_, args)
+                for i,(zi, Ai, si, ssi, C_ord_i, loglik_i, s_row_i) in enumerate(res):
+                    Z[divide[i]:divide[i+1]] = zi
+                    A[divide[i]:divide[i+1]] = Ai
+                    S[divide[i]:divide[i+1]] = si
+                    SS[divide[i]:divide[i+1]] = ssi
+                    C_ord[divide[i]:divide[i+1]] = C_ord_i
+                    loglik += loglik_i
+                    s_row += s_row_i
+            # computation across columns
+            divide = p/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [(
+                    Z[:,divide[i]:divide[i+1]].copy(), 
+                    C_ord[:,divide[i]:divide[i+1]],
+                    U[divide[i]:divide[i+1]],
+                    sigma,
+                    A, S, SS, 
+                    ) for i in range(max_workers)]
+            W_new = np.zeros_like(U)
+            s_col = 0
+            with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                res = pool.map(_LRGC_em_col_step_body_, args)
+                for i,(wnew_i, s_col_i) in enumerate(res):
+                    W_new[divide[i]:divide[i+1]] = wnew_i
+                    s_col += s_col_i
 
-            zi_obs = Z[i,obs_indices]
-            Ui_obs = U[obs_indices,:]
-            UU_obs = np.dot(Ui_obs.T, Ui_obs) 
-            # YX: better edit to avoid vector-vector inner product when there is only one observation
-
-            # used in both ordinal and factor block
-            res = np.linalg.solve(UU_obs + sigma * np.diag(1.0/np.square(d)), np.concatenate((np.identity(rank), Ui_obs.T),axis=1))
-            Ai = res[:,:rank]
-            AU = res[:,rank:]
-            A[i,:,:] = Ai
-
-            # when there is an observed ordinal to be imputed and another observed dimension, impute this ordinal
-            if len(obs_indices) >= 2 and len(ord_obs_indices) >= 1:
-                #print("ENTERED INNER LOOP!!!")
-                mu = (zi_obs - np.dot(Ui_obs, np.dot(AU, zi_obs)))/sigma
-                for ind in range(len(obs_indices)):
-                    j = obs_indices[ind]
-                    if j < num_ord:
-                        sigma_ij = sigma/(1 - np.dot(U[j,:].T, np.dot(Ai, U[j,:])))
-                        mu_ij = Z[i,j] - mu[ind] * sigma_ij
-                        mu_ij_new, sigma_ij_new = truncnorm.stats(
-                            a=(r_lower[i,j] - mu_ij) / np.sqrt(sigma_ij),
-                            b=(r_upper[i,j] - mu_ij) / np.sqrt(sigma_ij),
-                            loc=mu_ij, scale=np.sqrt(sigma_ij),moments='mv')
-                        if np.isfinite(sigma_ij_new):
-                            C[i,j] = sigma_ij_new
-                        else:
-                            print("variance was not finite and is: " +str(sigma_ij_new))
-                        if np.isfinite(mu_ij_new):
-                            Z[i,j] = mu_ij_new
-                        else:
-                            print("mean was not finite and is: " +str(mu_ij_new))
-
-            si = np.dot(AU, zi_obs)
-            S[i,:] = si
-            SS[i,:,:] = np.dot(AU * C[i, obs_indices], AU.T) + np.outer(si, si.T)
-            negloglik = negloglik + np.log(sigma) * p + np.linalg.slogdet(np.identity(rank) + np.outer(d/sigma, d) * UU_obs)[1]
-            negloglik = negloglik + np.sum(zi_obs**2) - np.dot(zi_obs.T, np.dot(Ui_obs, si))
-
-        #print(negloglik)
-        # M-step in W iterate over p
-        W_new = np.copy(W)
-        s = np.sum(C)
-
-        for j in range(p):
-            index_j = np.nonzero(~np.isnan(Z[:,j]))[0]
-            # numerator
-            rj = self._sum_2d_scale(M=S, c=Z[:,j], index=index_j) + np.dot(self._sum_3d_scale(A, c=C[:,j], index=index_j), U[j,:])
-            # denominator
-            Fj = self._sum_3d_scale(SS+sigma*A, c=np.ones(n), index = index_j) 
-            W_new[j,:] = np.linalg.solve(Fj,rj) 
-            s = s -  np.dot(rj, W_new[j,:])
-
-        s1 = s
-        #print('cross numerator: '+str(s1/float(np.sum(~np.isnan(Z)))))
-
-
-        # M-step in sigma^2
-        for i in range(n):
-            obs_indices = np.nonzero(~np.isnan(Z[i,:]))
-            zi_obs = Z[i,obs_indices]
-            s += np.sum(zi_obs**2)
-        #print('z numerator: '+str((s-s1)/float(np.sum(~np.isnan(Z)))))
-        
-
+        s = s_row+np.sum(C_ord)-s_col
         sigma_new = s/float(np.sum(~np.isnan(Z)))
-        #print(sigma_new)
         W_new = np.dot(W_new * d, V)
         W, sigma = self._scale_corr(W_new, sigma_new)
-        #print(sigma)
-        loglik = -negloglik/2.0
-        return W, sigma, Z, C, loglik/n
+        return W, sigma, Z, C_ord, loglik/n
 
 
 

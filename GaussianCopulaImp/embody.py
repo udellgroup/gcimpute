@@ -90,17 +90,18 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
             for j in range(num_ord):
                 # j is the location in the p-dim coordinate
                 # j_in_obs is the location of j in the obs-dim coordiate
+                # TODO simplify the iteration command into a single for-loop
                 if obs_indices[j]:
                     new_var_ij = (1.0/sigma_obs_obs_inv[j_in_obs, j_in_obs].item())
                     new_std_ij = np.sqrt(new_var_ij)
                     new_mean_ij = Z_row[j] - new_var_ij*sigma_obs_obs_inv_Zobs_row[j_in_obs]
                     a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
                     try:
-                        mean, var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
-                        if np.isfinite(var):
-                            var_ordinal[j] = var
-                        if np.isfinite(mean):
-                            Z_row[j] = mean
+                        _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
+                        if np.isfinite(_var):
+                            var_ordinal[j] = _var
+                        if np.isfinite(_mean):
+                            Z_row[j] = _mean
                     except RuntimeWarning:
                         #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
                         truncnorm_warn = True
@@ -130,3 +131,134 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
     negloglik = np.linalg.slogdet(sigma_obs_obs)[1] + np.inner(np.dot(sigma_obs_obs_inv, Z_obs), Z_obs)
     loglik = -negloglik/2.0 
     return C, Z_imp_row, Z_row, var_ordinal, loglik, truncnorm_warn
+
+
+def _LRGC_em_row_step_body_(args):
+    """
+    Does a step of the EM algorithm, needed to dereference args to support parallelism
+    """
+    return _LRGC_em_row_step_body(*args)
+
+def _LRGC_em_row_step_body(Z, r_lower, r_upper, U, d, sigma, num_ord_updates):
+    """
+    Iterate the rows over provided matrix 
+    """
+    n, p = Z.shape
+    rank = U.shape[1]
+
+    A = np.zeros((n, rank, rank))
+    SS = np.copy(A)
+    S = np.zeros((n,rank))
+    C_ord = np.zeros((n,p))
+    trunc_warn = False
+    loglik = 0
+    s = 0
+
+    for i in range(n):
+        zi, Ai, si, ssi, c_ordinal, _loglik, _s, warn = _LRGC_em_row_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], U, d, sigma, num_ord_updates)
+        Z[i] = zi
+        A[i] = Ai
+        S[i] = si
+        SS[i] = ssi
+        C_ord[i] = c_ordinal
+        loglik += _loglik
+        s += _s
+        trunc_warn = trunc_warn or warn
+    if trunc_warn:
+        print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
+    return Z, A, S, SS, C_ord, loglik, s
+
+
+def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num_ord_updates=1):
+    rank = U.shape[1]
+    missing_indices = np.isnan(Z_row)
+    obs_indices = ~missing_indices
+    zi_obs = Z_row[obs_indices]
+    Ui_obs = U[obs_indices,:]
+    UU_obs = np.dot(Ui_obs.T, Ui_obs) 
+
+    # used in both ordinal and factor block
+    res = np.linalg.solve(UU_obs + sigma * np.diag(1.0/np.square(d)), np.concatenate((np.identity(rank), Ui_obs.T),axis=1))
+    Ai = res[:,:rank]
+    AU = res[:,rank:]
+
+    p, num_ord = Z_row.shape[0], r_upper_row.shape[0]
+    var_ordinal = np.zeros(p)  
+    ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
+    truncnorm_warn = False
+    if sum(obs_indices) >=2 and any(ord_obs_indices):
+        for _ in range(num_ord_updates):
+            mu = (zi_obs - np.dot(Ui_obs, np.dot(AU, zi_obs)))/sigma
+            j_in_obs = 0
+
+            for j in range(num_ord):
+                if obs_indices[j]:
+                    new_var_ij  = sigma/(1 - np.dot(U[j,:].T, np.dot(Ai, U[j,:])))
+                    new_std_ij = np.sqrt(new_var_ij)
+                    new_mean_ij = Z_row[j] - new_var_ij*mu[j_in_obs]
+                    a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
+                    try:
+                        _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
+                        if np.isfinite(_var):
+                            var_ordinal[j] = _var
+                        if np.isfinite(_mean):
+                            Z_row[j] = _mean
+                    except RuntimeWarning:
+                        #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
+                        truncnorm_warn = True
+                    # update the relative location after we see an ordinal observed variable
+                    j_in_obs += 1
+
+    si = np.dot(AU, zi_obs)
+    ssi = np.dot(AU * var_ordinal[obs_indices], AU.T) + np.outer(si, si.T)
+
+    negloglik = np.log(sigma) * p + np.linalg.slogdet(np.identity(rank) + np.outer(d/sigma, d) * UU_obs)[1]
+    negloglik += np.sum(zi_obs**2) - np.dot(zi_obs.T, np.dot(Ui_obs, si))
+    loglik = -negloglik/2.0
+
+    zi_obs_norm = np.power(zi_obs, 2).sum()
+    return Z_row, Ai, si, ssi, var_ordinal, loglik, zi_obs_norm, truncnorm_warn
+
+def _LRGC_em_col_step_body_(args):
+    """
+    Does a step of the EM algorithm, needed to dereference args to support parallelism
+    """
+    return _LRGC_em_col_step_body(*args)
+
+
+def _LRGC_em_col_step_body(Z, C_ord, U, sigma, A, S, SS):
+    """
+    Iterate the rows over provided matrix 
+    """
+    W = np.zeros_like(U)
+    p = Z.shape[1]
+    s = 0
+    for j in range(p):
+        _w, _s = _LRGC_em_col_step_body_col(Z[:,j], C_ord[:,j], U[j], sigma, A, S, SS)
+        W[j] = _w
+        s += _s
+    return W, s
+
+def _LRGC_em_col_step_body_col(Z_col, C_ord_col, U_col, sigma, A, S, SS):
+    index_j = ~np.isnan(Z_col)
+    # numerator
+    rj = _sum_2d_scale(M=S, c=Z_col, index=index_j) + np.dot(_sum_3d_scale(A, c=C_ord_col, index=index_j), U_col)
+    # denominator
+    Fj = _sum_3d_scale(SS+sigma*A, c=np.ones(A.shape[0]), index = index_j) 
+    w_new = np.linalg.solve(Fj,rj) 
+    s = np.dot(rj, w_new)
+    return w_new, s
+
+
+def _sum_3d_scale(M, c, index):
+    res = np.empty((M.shape[1], M.shape[2]))
+    for j in range(M.shape[1]):
+        for k in range(M.shape[2]):
+            res[j,k] = np.sum(M[index,j,k] * c[index])
+    return res
+
+def _sum_2d_scale(M, c, index):
+    res = np.empty(M.shape[1])
+    for j in range(M.shape[1]):
+        res[j] = np.sum(M[index,j] * c[index])
+    return res

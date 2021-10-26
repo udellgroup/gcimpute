@@ -1,6 +1,6 @@
 from .transform_function import TransformFunction
 from .online_transform_function import OnlineTransformFunction
-from .embody import _em_step_body_, _em_step_body, _em_step_body_row
+from .embody import _em_step_body_
 from scipy.stats import norm, truncnorm
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
@@ -384,7 +384,7 @@ class GaussianCopula():
 
     # TO DO: add a function attribute which takes estimated model and new point as input to return immediate imputaiton
     #  that would serve as out-of-sample prediction without updating the model parameter. Computation will be smaller but the complexity is still O(p^3)
-    def partial_fit_and_predict(self, X_batch, step_size=0.5, corr_update=True, marginal_update = True, corr_diff=None):
+    def partial_fit_and_predict(self, X_batch, step_size=0.5, corr_update=True, marginal_update=True, corr_diff=None):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -405,7 +405,6 @@ class GaussianCopula():
             self.transform_function.partial_fit(X_batch)
         # update marginals with the new batch
         #self.transform_function.partial_fit(X_batch)
-        # print("X_batch", X_batch)
         #
         # _fit_covariance step
         Z_ord_lower, Z_ord_upper = self.transform_function.partial_evaluate_ord_latent(X_batch)

@@ -11,7 +11,7 @@ from collections import defaultdict
 def run_onerep(setting, seed=1, 
                n=500, p=200, rank=10, noise_ratio=0.1, mask_ratio=0.4,
                threshold=0.01, max_iter=50, 
-               ordinalize_by='quantile', ord_num=5):
+               ordinalize_by='quantile', ord_num=5, max_workers=4):
     '''
     To be consistent with the experimental setting in the paper "Matrix Completion with Quantified Uncertainty through Low Rank Gaussian Copula", 
     we use ordinalized_by = 'quantile'. Setting ordinalized_by = 'dist' will yield an easier setting, since smaller MAE can be achieved.
@@ -38,7 +38,7 @@ def run_onerep(setting, seed=1,
     X_masked = mask(Xtrue, mask_fraction = mask_ratio, seed=seed)
 
     start_time = time.time()
-    LRGC = LowRankGaussianCopula(rank=rank, tol=threshold, random_state=seed, max_iter=max_iter)
+    LRGC = LowRankGaussianCopula(rank=rank, tol=threshold, random_state=seed, max_iter=max_iter, n_jobs=max_workers)
     X_imp = LRGC.fit_transform(X=X_masked)
     out = LRGC.get_params()
     W, sigma_est =out['copula_factor_loading'], out['copula_noise_ratio']
@@ -53,7 +53,7 @@ def run_onerep(setting, seed=1,
 
 def main(setting, NUM_STEPS=10, 
          n=500, p=200,
-         threshold=0.01, max_iter=50):
+         threshold=0.01, max_iter=50, max_workers=4):
     if setting in ['LR-cont','HR-cont']:
         rank = 10
         mask_ratio = 0.4
@@ -73,7 +73,7 @@ def main(setting, NUM_STEPS=10,
     for i in tqdm(range(1, NUM_STEPS + 1)):
         output = run_onerep(setting=setting, 
                             seed=i, threshold=threshold, max_iter=max_iter,
-                            n=n, p=p, rank=rank, noise_ratio=noise_ratio, mask_ratio=mask_ratio)
+                            n=n, p=p, rank=rank, noise_ratio=noise_ratio, mask_ratio=mask_ratio, max_workers=max_workers)
         for name, value in output.items():
             output_all[name].append(value)
     # restults
@@ -93,10 +93,11 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--rep', default=10, type=int, help='number of repetitions to run')
     parser.add_argument('-i', '--iter', default=50, type=int, help='maximum number of iterations to run')
     parser.add_argument('-t', '--threshold', default=0.01, type=float, help='minimal parameter difference for model update')
+    parser.add_argument('-w', '--workers', default=4, type=int, help='number of parallel workers to use')
 
     args = parser.parse_args()
 
-    main(setting=args.setting, NUM_STEPS=args.rep, max_iter=args.iter, threshold=args.threshold)
+    main(setting=args.setting, NUM_STEPS=args.rep, max_iter=args.iter, threshold=args.threshold, max_workers=args.workers)
 
 #  Results for reference
 
