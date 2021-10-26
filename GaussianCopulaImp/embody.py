@@ -204,7 +204,6 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
                         if np.isfinite(_mean):
                             Z_row[j] = _mean
                     except RuntimeWarning:
-                        #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
                         truncnorm_warn = True
                     # update the relative location after we see an ordinal observed variable
                     j_in_obs += 1
@@ -212,8 +211,9 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
     si = np.dot(AU, zi_obs)
     ssi = np.dot(AU * var_ordinal[obs_indices], AU.T) + np.outer(si, si.T)
 
-    negloglik = np.log(sigma) * p + np.linalg.slogdet(np.identity(rank) + np.outer(d/sigma, d) * UU_obs)[1]
-    negloglik += np.sum(zi_obs**2) - np.dot(zi_obs.T, np.dot(Ui_obs, si))
+    num_obs = obs_indices.sum()
+    negloglik = np.log(sigma) * (num_obs-rank) + np.linalg.slogdet(np.identity(rank) * sigma + np.power(d,2) * UU_obs)[1]
+    negloglik += (np.sum(zi_obs**2) - np.dot(zi_obs.T, np.dot(Ui_obs, si)))/sigma
     loglik = -negloglik/2.0
 
     zi_obs_norm = np.power(zi_obs, 2).sum()

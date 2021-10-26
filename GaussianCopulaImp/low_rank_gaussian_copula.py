@@ -148,7 +148,7 @@ class LowRankGaussianCopula(GaussianCopula):
         W = u[:,:self._rank] * (np.sqrt(d[:self._rank] - sigma))
         self._W, self._sigma = self._scale_corr(W, sigma)
         if self._verbose>0:
-            print(f'Ater initialization, W has shape {self._W.shape} and sigma is {self._sigma}')
+            print(f'Ater initialization, W has shape {self._W.shape} and sigma is {self._sigma:.4f}')
 
         converged = False
         for i in range(self._max_iter):
@@ -168,6 +168,8 @@ class LowRankGaussianCopula(GaussianCopula):
 
             if wupdate < self._threshold:
                 converged = True
+            
+            if converged:
                 break
 
         # store the number of iterations and print if converged
@@ -326,22 +328,6 @@ class LowRankGaussianCopula(GaussianCopula):
             W[j,:] = np.sqrt(1 - sigma) * W[j,:]/np.sqrt(tr[j])
         return W, sigma
 
-
-
-    def _sum_3d_scale(self, M, c, index):
-        res = np.empty((M.shape[1], M.shape[2]))
-        for j in range(M.shape[1]):
-            for k in range(M.shape[2]):
-                #res[j,k] = np.sum(M[:,j,k][index] * c[index])
-                res[j,k] = np.sum(M[index,j,k] * c[index])
-        return res
-
-    def _sum_2d_scale(self, M, c, index):
-        res = np.empty(M.shape[1])
-        for j in range(M.shape[1]):
-            #res[j] = np.sum(M[:,j][index] * c[index])
-            res[j] = np.sum(M[index,j] * c[index])
-        return res
 
     def _impute_missing_oracle(self, X, W, sigma, f = None, finv = None, max_ord_levels = 20):
         # only for continuous matrix

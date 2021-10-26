@@ -375,6 +375,8 @@ class GaussianCopula():
                 
             if corrudpate < self._threshold:
                 converged = True
+
+            if converged:
                 break
                 
         # store the number of iterations and print if converged
