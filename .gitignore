@@ -5,7 +5,6 @@ myvenv/
 GaussianCopulaImp/.DS_Store
 .DS_Store
 .vs*
-*.csv
 *.swp
 .id*
 bui*

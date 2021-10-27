@@ -121,3 +121,7 @@ def load_GSS(cols=None, to_array = False):
             raise
     return np.array(data) if to_array else data
 
+def load_movielens1m_top150():
+    stream = pkg_resources.resource_stream(__name__, 'data/movielens1m_top150movie.csv')
+    data = pd.read_csv(stream, index_col=0).to_numpy()
+    return data
