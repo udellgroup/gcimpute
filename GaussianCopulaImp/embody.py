@@ -80,33 +80,30 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
     ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
     truncnorm_warn = False
     if sum(obs_indices) >=2 and any(ord_obs_indices):
+        ord_obs_iter = np.arange(num_ord)[ord_obs_indices[:num_ord]]
         for update_iter in range(num_ord_updates):
             # used to efficiently compute conditional mean
             sigma_obs_obs_inv_Zobs_row = np.dot(sigma_obs_obs_inv, Z_row[obs_indices])
-            j_in_obs = 0
 
             # TO DO: accelerate is possible. Replace the for-loop with vector/matrix computation.
             # Essentially, replace the Gauss-Seidel style update with a Jacobi style update for the nonlinear system
-            for j in range(num_ord):
+            for j_in_obs, j in enumerate(ord_obs_iter):
                 # j is the location in the p-dim coordinate
                 # j_in_obs is the location of j in the obs-dim coordiate
                 # TODO simplify the iteration command into a single for-loop
-                if obs_indices[j]:
-                    new_var_ij = (1.0/sigma_obs_obs_inv[j_in_obs, j_in_obs].item())
-                    new_std_ij = np.sqrt(new_var_ij)
-                    new_mean_ij = Z_row[j] - new_var_ij*sigma_obs_obs_inv_Zobs_row[j_in_obs]
-                    a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
-                    try:
-                        _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
-                        if np.isfinite(_var):
-                            var_ordinal[j] = _var
-                        if np.isfinite(_mean):
-                            Z_row[j] = _mean
-                    except RuntimeWarning:
-                        #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
-                        truncnorm_warn = True
-                    # update the relative location after we see an ordinal observed variable
-                    j_in_obs += 1
+                new_var_ij = (1.0/sigma_obs_obs_inv[j_in_obs, j_in_obs].item())
+                new_std_ij = np.sqrt(new_var_ij)
+                new_mean_ij = Z_row[j] - new_var_ij*sigma_obs_obs_inv_Zobs_row[j_in_obs]
+                a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
+                try:
+                    _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
+                    if np.isfinite(_var):
+                        var_ordinal[j] = _var
+                    if np.isfinite(_mean):
+                        Z_row[j] = _mean
+                except RuntimeWarning:
+                    #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
+                    truncnorm_warn = True
 
     # initialize C 
     C = np.diag(var_ordinal)
@@ -187,26 +184,24 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
     ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
     truncnorm_warn = False
     if sum(obs_indices) >=2 and any(ord_obs_indices):
+        ord_obs_iter = np.arange(num_ord)[ord_obs_indices[:num_ord]]
         for _ in range(num_ord_updates):
             mu = (zi_obs - np.dot(Ui_obs, np.dot(AU, zi_obs)))/sigma
-            j_in_obs = 0
 
-            for j in range(num_ord):
-                if obs_indices[j]:
-                    new_var_ij  = sigma/(1 - np.dot(U[j,:].T, np.dot(Ai, U[j,:])))
-                    new_std_ij = np.sqrt(new_var_ij)
-                    new_mean_ij = Z_row[j] - new_var_ij*mu[j_in_obs]
-                    a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
-                    try:
-                        _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
-                        if np.isfinite(_var):
-                            var_ordinal[j] = _var
-                        if np.isfinite(_mean):
-                            Z_row[j] = _mean
-                    except RuntimeWarning:
-                        truncnorm_warn = True
-                    # update the relative location after we see an ordinal observed variable
-                    j_in_obs += 1
+            for j_in_obs, j in enumerate(ord_obs_iter):
+                new_var_ij  = sigma/(1 - np.dot(U[j,:].T, np.dot(Ai, U[j,:])))
+                new_std_ij = np.sqrt(new_var_ij)
+                new_mean_ij = Z_row[j] - new_var_ij*mu[j_in_obs]
+                a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
+                try:
+                    _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
+                    if np.isfinite(_var):
+                        var_ordinal[j] = _var
+                    if np.isfinite(_mean):
+                        Z_row[j] = _mean
+                except RuntimeWarning:
+                    truncnorm_warn = True
+
 
     si = np.dot(AU, zi_obs)
     ssi = np.dot(AU * var_ordinal[obs_indices], AU.T) + np.outer(si, si.T)

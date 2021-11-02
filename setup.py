@@ -2,8 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name='GaussianCopulaImp',
-    version='0.0.5',
+    version='0.0.6',
     description='A missing value imputation algorithm using the Gaussian copula model',
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     packages=find_packages(),
     url='https://github.com/udellgroup/GaussianCopulaImp',
     author = 'Yuxuan Zhao, Eric Landgrebe, Eliot Shekhtman, Madeleiene Udell',

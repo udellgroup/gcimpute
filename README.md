@@ -80,7 +80,7 @@ cor_error = get_scaled_error(copula_corr_est, copula_corr)
 print(f'The scaled correlation error is: {cor_error:.3f}')
 ```
 
-
+More detailed examples are available under directory Examples.
 
 ## References
 [1] Zhao, Y. and Udell, M. Missing value imputation for mixed data via Gaussian copula, KDD 2020.

@@ -7,43 +7,41 @@ class TransformFunction():
         self.ord_indices = ord_indices
         self.cont_indices = cont_indices
 
-    def get_cont_latent(self):
+    def get_cont_latent(self, X_to_transform=None):
         """
         Return the latent variables corresponding to the continuous entries of 
         self.X. Estimates the CDF columnwise with the empyrical CDF
         """
-        X_cont = self.X[:,self.cont_indices]
-        Z_cont = np.empty(X_cont.shape)
-        n = self.X.shape[0]
-        for i, x_col in enumerate(X_cont.T):
-            missing = np.isnan(x_col)
-            x_col_noNan = x_col[~missing]
-            ecdf = ECDF(x_col_noNan)
-            Z_cont[:,i] = norm.ppf((n / (n + 1.0)) * ecdf(x_col))
-            # re-add the nan values
-            Z_cont[missing,i] = np.nan
+        indices = self.cont_indices
+        if X_to_transform is None:
+            X_to_transform = self.X[:,indices]
+        else:
+            X_to_transform = X_to_transform[:,indices]
+        X_to_est = self.X[:,indices]
+
+        Z_cont = np.empty(X_to_transform.shape)
+        for j, (x_col, x_est_col) in enumerate(zip(X_to_transform.T, X_to_est.T)):
+            Z_cont[:,j] = self._obs_to_latent_cont(x_obs = x_col, x_ecdf = x_est_col)
         return Z_cont
 
-    def get_ord_latent(self):
+    def get_ord_latent(self, X_to_transform=None):
         """
         Return the lower and upper ranges of the latent variables corresponding 
         to the ordinal entries of X. Estimates the CDF columnwise with the empyrical CDF
         """
-        X_ord = self.X[:,self.ord_indices]
-        Z_ord_lower = np.empty(X_ord.shape)
-        Z_ord_upper = np.empty(X_ord.shape)
-        for i, x_col in enumerate(X_ord.T):
-            missing = np.isnan(x_col)
-            x_col_noNan = x_col[~missing]
-            ecdf = ECDF(x_col_noNan)
-            unique = np.unique(x_col_noNan)
-            # half the min differenence between two ordinals
-            threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
-            Z_ord_lower[:,i] = norm.ppf(ecdf(x_col - threshold))
-            Z_ord_upper[:,i] = norm.ppf(ecdf(x_col + threshold))
-            # re-add the nan values
-            Z_ord_lower[missing,i] = np.nan
-            Z_ord_upper[missing,i] = np.nan
+        indices = self.ord_indices
+        if X_to_transform is None:
+            X_to_transform = self.X[:,indices]
+        else:
+            X_to_transform = X_to_transform[:,indices]
+        X_to_est = self.X[:,indices]
+
+        Z_ord_lower = np.empty(X_to_transform.shape)
+        Z_ord_upper = np.empty(X_to_transform.shape)
+        for j, (x_col, x_est_col) in enumerate(zip(X_to_transform.T, X_to_est.T)):
+            lower, upper = self._obs_to_latent_ord(x_obs = x_col, x_ecdf = x_est_col)
+            Z_ord_lower[:,j] = lower
+            Z_ord_upper[:,j] = upper
         return Z_ord_lower, Z_ord_upper
 
     def impute_cont_observed(self, Z):
@@ -51,28 +49,89 @@ class TransformFunction():
         Applies marginal scaling to convert the latent entries in Z corresponding
         to continuous entries to the corresponding imputed oberserved value
         """
-        X_cont = self.X[:, self.cont_indices]
-        Z_cont = Z[:, self.cont_indices]
+        indices = self.cont_indices
+        X_cont = self.X[:, indices]
+        Z_cont = Z[:, indices]
         X_imp = np.copy(X_cont)
-        for i, x_col in enumerate(X_cont.T):
-            missing = np.isnan(x_col)
-            # Only impute missing entries
-            X_imp[missing,i] = np.quantile(x_col[~missing], norm.cdf(Z_cont[missing,i]))
+        for j, (z_col, x_col)  in enumerate(zip(Z_cont.T, X_cont.T)):
+            X_imp[:,j] = self._latent_to_obs_cont(x_obs = x_col, z_latent = z_col)
         return X_imp
 
     def impute_ord_observed(self, Z):
         """
         Applies marginal scaling to convert the latent entries in Z corresponding
-        to ordinal entries to the corresponding imputed oberserved value
+        to ordinal entries to the corresponding imputed oberserved value.
+        For each variable, the missing entries are detected by reading the storeed marginal estimate points
         """
-        X_ord = self.X[:, self.ord_indices]
-        Z_ord = Z[:, self.ord_indices]
+        indices = self.ord_indices
+        X_ord = self.X[:, indices]
+        Z_ord = Z[:, indices]
         X_imp = np.copy(X_ord)
-        for i, x_col in enumerate(X_ord.T):
-            missing = np.isnan(x_col)
-            # only impute missing entries
-            X_imp[missing,i] = self.inverse_ecdf(x_col[~missing], norm.cdf(Z_ord[missing,i]))
+        for j, (z_col, x_col) in enumerate(zip(Z_ord.T, X_ord.T)):
+            X_imp[:,j] = self._latent_to_obs_ord(x_obs = x_col, z_latent = z_col)
         return X_imp
+
+    def _obs_to_latent_cont(self, x_obs, x_ecdf):
+        x_ecdf = x_ecdf[~np.isnan(x_ecdf)]
+        ecdf = ECDF(x_ecdf)
+        l = len(x_ecdf)
+        q = (l / (l + 1.0)) * ecdf(x_obs)
+        q[q==0] = 1/(2*(l+1))
+        q = norm.ppf(q)
+        q[np.isnan(x_obs)] = np.nan
+        return q
+
+    def _obs_to_latent_ord(self, x_obs, x_ecdf):
+        x_ecdf = x_ecdf[~np.isnan(x_ecdf)]
+        ecdf = ECDF(x_ecdf)
+        unique = np.unique(x_ecdf)
+        # half the min differenence between two ordinals
+        if len(unique)>1:
+            threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
+            lower = norm.ppf(ecdf(x_obs - threshold))
+            upper = norm.ppf(ecdf(x_obs + threshold))
+        else:
+            print("Only a single level for ordinal variable")
+            lower = -np.inf
+            upper = np.inf
+        missing = np.isnan(x_obs)
+        lower[missing] = np.nan
+        upper[missing] = np.nan
+        return lower, upper
+
+    # TODO: merge _latent_to_obs_cont and _latent_to_obs_ord
+    def _latent_to_obs_cont(self, x_obs, z_latent, x_to_impute=None):
+        x_imp = x_obs.copy()
+        if x_to_impute is None:
+            missing = np.isnan(x_obs)
+            x_obs_est = x_obs[~missing]
+        else:
+            missing = np.isnan(x_to_impute)
+            x_obs_est= x_obs[~np.isnan(x_obs)]
+        # TODO: try different interpolation strategy
+        # the imputation function
+        # only impute missing entries
+        if any(missing):
+            q_imp = norm.cdf(z_latent[missing])
+            x_imp[missing] = np.quantile(x_obs_est, q_imp)
+        return x_imp
+
+    def _latent_to_obs_ord(self, x_obs, z_latent, x_to_impute=None):
+        if x_to_impute is None:
+            x_imp = x_obs.copy()
+            missing = np.isnan(x_obs)
+            x_obs_est = x_obs[~missing]
+        else:
+            x_imp = x_to_impute.copy()
+            missing = np.isnan(x_to_impute)
+            x_obs_est = x_obs[~np.isnan(x_obs)]
+        # TODO: try different interpolation strategy
+        # the imputation function
+        # only impute missing entries
+        if any(missing):
+            q_imp = norm.cdf(z_latent[missing])
+            x_imp[missing] = self.inverse_ecdf(data=x_obs_est, x=q_imp)
+        return x_imp
 
     def inverse_ecdf(self, data, x, DECIMAL_PRECISION = 3):
         """

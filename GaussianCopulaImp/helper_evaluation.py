@@ -62,8 +62,8 @@ def get_smae(x_imp, x_true, x_obs,
         error[i,0] = np.sum(diff)
         error[i,1] = np.sum(base_diff)
         if error[i,1] == 0:
-            print(f'Baseline imputation achieves zero imputation error in variable {i+1}.' 
-                  f'There are {sum(test)} imputed entries, ranging from {x_true_col.min()} (min) to {x_true_col.max()} (max).')
+            print(f'Baseline imputation achieves zero imputation error in variable {i+1}.') 
+            print(f'The {sum(test)} true values range from {x_true_col.min()} (min) to {x_true_col.max()} (max).')
             error[i,1] = np.nan
 
     if per_type:

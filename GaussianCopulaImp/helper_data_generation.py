@@ -29,7 +29,7 @@ def _cont_to_ord(x, k, by = 'dist', seed=1, q_min=0.05, q_max=0.95):
     return ords
 
 
-def cont_to_ord(x, k, by = 'dist', seed=1, max_try=20):
+def cont_to_ord(x, k, by = 'dist', seed=1, max_try=20, qmin=0.05, qmax=0.95):
     """
     convert entries of x to an ordinal with k levels using thresholds selected by one choice of the following:
     by = 'dist': select evenly spaced thresholds
@@ -40,7 +40,7 @@ def cont_to_ord(x, k, by = 'dist', seed=1, max_try=20):
     c = 0
     while len(np.unique(result))<k:
         c += 1
-        result = _cont_to_ord(x,k,by,seed+c)
+        result = _cont_to_ord(x,k,by,seed+c, qmin, qmax)
         if c==max_try:
             raise ValueError("Failure: the ordinalized variable always has fewer than {k} levels in {max_try} attempts")
     return result
@@ -79,7 +79,7 @@ def generate_LRGC(var_types, rank, sigma, n=500, ord_num=5, cont_transform=lambd
     return X_true, W
 
 
-def generate_mixed_from_gc(sigma=None, n=2000, seed=1, var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}, cutoff_by='dist'):
+def generate_mixed_from_gc(sigma=None, n=2000, seed=1, var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}, cutoff_by='quantile'):
     '''
     sigma: either a single correlation matrix or a list of correlation matrices
     '''

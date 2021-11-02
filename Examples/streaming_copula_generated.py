@@ -16,7 +16,7 @@ def run_onerep(seed=1, n=2000,
 	           batch_size= 40, batch_c=0, max_iter=50, const_decay=0.5,
 	           num_ord_updates=1, threshold=0.01, max_workers=4,
 			   var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))},
-			   MASK_NUM=2,  cutoff_by='dist'):
+			   MASK_NUM=2,  cutoff_by='quantile'):
 	sigma = [generate_sigma(seed+i, p=sum([len(value) for value in var_types.values()])) for i in range(3)]
 	X = generate_mixed_from_gc(sigma=sigma, n=n, seed=seed, var_types=var_types, cutoff_by=cutoff_by)
 	X_masked = mask_types(X, MASK_NUM, seed=seed)
@@ -29,20 +29,18 @@ def run_onerep(seed=1, n=2000,
 	gc = GaussianCopula(training_mode='minibatch-online', 
 		const_stepsize=const_decay, 
 		batch_size=batch_size, 
-		cont_indices=cont_indices, 
 		tol=threshold, max_iter=max_iter, 
 		random_state=seed, n_jobs=max_workers)
-	X_imp_online = gc.fit_transform(X_masked)
+	X_imp_online = gc.fit_transform(X_masked, cont_indices=cont_indices)
 	copula_corr_change = gc.corr_diff
 
 	# offline model fitting
 	gc = GaussianCopula(training_mode='minibatch-offline', 
 		stepsize_func=lambda k, c=batch_c:c/(k+c), const_stepsize=None, 
 		batch_size=batch_size, 
-		cont_indices=cont_indices, 
 		tol=threshold, max_iter=max_iter, 
 		random_state=seed, n_jobs=max_workers)
-	X_imp_offline = gc.fit_transform(X_masked)
+	X_imp_offline = gc.fit_transform(X_masked, cont_indices=cont_indices)
 	
 	# save results 
 	smae_online = get_smae_batch(X_imp_online, X, X_masked, batch_size=batch_size, per_type=True, var_types=var_types)
