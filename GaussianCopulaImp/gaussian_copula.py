@@ -3,6 +3,7 @@ from .online_transform_function import OnlineTransformFunction
 from .embody import _em_step_body_
 from scipy.stats import norm, truncnorm
 import numpy as np
+import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 from scipy.linalg import svdvals
 from collections import defaultdict
@@ -183,9 +184,7 @@ class GaussianCopula():
                 The imputed input data
         '''
         if self._training_mode == 'minibatch-online':
-            self.set_indices(X, cont_indices)
-            if hasattr(X, 'columns'):
-                self.features_names = np.array(X.columns.to_list())
+            X = self._preprocess_data(X, cont_indices)
             return self.fit_transform_online(X)
         else:
             return self.fit_transform_offline(X, cont_indices)
@@ -244,38 +243,71 @@ class GaussianCopula():
         else:
             raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
 
+    def fit_change_point_test(self, X, cont_indices, nsamples=100, verbose=False):
+        assert self._training_mode == 'minibatch-online'
+        X = self._preprocess_data(X, cont_indices)
+        self.transform_function = OnlineTransformFunction(self._cont_indices, self._ord_indices, window_size=self._window_size)
+        n,p = X.shape
+        self._corr = np.identity(p)
+        pvals = defaultdict(list)
+        test_stats = defaultdict(list)
 
-    def fit_offline(self, X, cont_indices):
-        '''
-        Implement fit when the training mode is 'standard' or 'minibatch-offline'
-        '''
-        if hasattr(X, 'columns'):
-            self.features_names = np.array(X.columns.to_list())
-        X = np.array(X)
-        self.set_indices(X, cont_indices)
-        self.transform_function = TransformFunction(X, self._cont_indices, self._ord_indices)
-        Z_imp, C_ord = self._fit_covariance(X)
+        i=0
+        while True:
+            batch_lower= i*self._batch_size
+            batch_upper=min((i+1)*self._batch_size, n)
+            if batch_lower>=n:
+                break 
+            if verbose:
+                print(f'start batch {i+1}')
+            indices = np.arange(batch_lower, batch_upper, 1)
+            _pval, _diff = self.change_point_test(X[indices,:], step_size=self.stepsize(i+1), nsamples=nsamples)
+            for t in self._corr_diff_type:
+                pvals[t].append(_pval[t])
+                test_stats[t].append(_diff[t])
+            i+=1
+        out = {'pval':pvals, 'statistics':test_stats}
+        return out
 
-        # attributes to store after model fitting
-        self._latent_Zimp = Z_imp
-        self._latent_Cord = C_ord
+    
 
     def fit_transform_offline(self, X, cont_indices):
         '''
         Implement fit_transform when the training mode is 'standard' or 'minibatch-offline'
         '''
         self.fit_offline(X, cont_indices)
-        # During the fitting process, all ordinal columns are moved to appear before all continuous columns
-        # Rearange the obtained results to go back to the original data ordering
-        _order = self.back_to_original_order()
-        Z_imp_rearranged = self._latent_Zimp[:,_order]
-        X_imp = np.empty(X.shape)
-        if np.sum(self._cont_indices) > 0:
-            X_imp[:,self._cont_indices] = self.transform_function.impute_cont_observed(Z_imp_rearranged)
-        if np.sum(self._ord_indices) >0:
-            X_imp[:,self._ord_indices] = self.transform_function.impute_ord_observed(Z_imp_rearranged)
+        X_imp = self.transform_offline(impute_seen_data=True)
         return X_imp
 
+    def fit_offline(self, X, cont_indices):
+        '''
+        Implement fit when the training mode is 'standard' or 'minibatch-offline'
+        '''
+        X = self._preprocess_data(X, cont_indices)
+        # do marginal estimation
+        # for every fit, a brand new marginal transformation is used 
+        self.transform_function = TransformFunction(X, self._cont_indices, self._ord_indices)
+
+        Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent()
+        # estimate copula correlation matrix
+        Z_imp, C_ord = self._fit_covariance(Z, Z_ord_lower, Z_ord_upper)
+
+        # attributes to store after model fitting
+        self._latent_Zimp = Z_imp
+        self._latent_Cord = C_ord
+
+    def transform_offline(self, X=None, impute_seen_data=False):
+        # get Z
+        if impute_seen_data:
+            Z = self._latent_Zimp
+        else:
+            raise NotImplementedError
+            assert X is not None
+            Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X)
+            # TODO: complete Z
+        # from Z to X
+        X_imp = self._latent_to_imp(Z=Z, X_to_impute=X)
+        return X_imp
 
     def fit_transform_online(self, X):
         '''
@@ -298,24 +330,70 @@ class GaussianCopula():
             i+=1
         return X_imp
 
+    def _latent_to_imp(self, Z, X_to_impute=None):
+        '''
+        Transform the complete latent matrix Z to the observed space, but only keep values at missing entries (to be imputed). 
+        All values at observe entries will be replaced with original observation in X_to_impute.
+        Args:
+            X_to_transform: (nsamples, nfeatures) or None
+                If None, self.transform_function.X will be used. 
+        '''
+        # During the fitting process, all ordinal columns are moved to appear before all continuous columns
+        # Rearange the obtained results to go back to the original data ordering
+        if X_to_impute is None:
+            X_to_impute = self.transform_function.X
+        _order = self.back_to_original_order()
+        Z_imp_rearranged = Z[:,_order]
+        X_imp = X_to_impute.copy()
+        if any(self._cont_indices):
+            X_imp[:,self._cont_indices] = self.transform_function.impute_cont_observed(Z=Z_imp_rearranged, X_to_impute=X_to_impute)
+        if any(self._ord_indices):
+            X_imp[:,self._ord_indices] = self.transform_function.impute_ord_observed(Z=Z_imp_rearranged, X_to_impute=X_to_impute)
+        return X_imp
 
-    def _fit_covariance(self, X):
+    def _observed_to_latent(self, X_to_transform=None):
+        '''
+        Transform data, X_to_transform, in the observed space into values in the latent space.
+        The marginal estimation is done by accessing self.transform_function.X.
+        X_to_transform can be out-of-samples that have never been seen.
+        Args:
+            X_to_transform: (nsamples, nfeatures) or None
+                If None, self.transform_function.X will be used. 
+        '''
+        #if X_to_transform is None:
+        #    X_to_transform = self.transform_function.X
+        Z_cont = self.transform_function.get_cont_latent(X_to_transform)
+        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z = np.concatenate((Z_ord, Z_cont), axis=1)
+        return Z, Z_ord_lower, Z_ord_upper
+    
+
+    def _observed_to_latent(self, X_to_transform=None):
+        if X_to_transform is None:
+            X_to_transform = self.transform_function.X
+        Z_cont = self.transform_function.get_cont_latent(X_to_transform=X_to_transform)
+        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_to_transform)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z = np.concatenate((Z_ord, Z_cont), axis=1)
+        return Z, Z_ord_lower, Z_ord_upper
+
+    def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper):
         """
-        Fits the covariance matrix of the gaussian copula using the data 
-        in X and returns the imputed latent values corresponding to 
-        entries of X and the covariance of the copula
+        Fits the gaussian copula correlation matrix using only the transformed data in the latent space.
 
         Args:
-            X (matrix): data matrix with entries to be imputed
+            Z (nsamples, nfeatures)
+                Transformed latent matrix
+            Z_ord_upper, Z_ord_lower (nsamples, nfeatures_ord)
+                Upper and lower bound to sample from
 
         Returns:
             C_ord
-            Z_imp (matrix): estimates of latent values
+            Z_imp (nsamples, nfeatures)
+                The completed matrix in the latent space
         """
-        n,p = X.shape
-
-        # Initialize 
-        Z, Z_ord_lower, Z_ord_upper = self._init_latent()
+        n,p = Z.shape
         # mean impute the missing continuous values for the sake of covariance estimation
         Z_imp = Z.copy()
         Z_imp[np.isnan(Z_imp)] = 0.0
@@ -323,10 +401,9 @@ class GaussianCopula():
         # initialize the correlation matrix
         self._corr = np.corrcoef(Z_imp, rowvar=False)
 
-
         # permutation of indices of data for stochastic fitting
         np.random.seed(self._seed)
-        training_permutation = np.random.permutation(X.shape[0])
+        training_permutation = np.random.permutation(n)
 
         # determine the maximal iteraitons to run        
         if self._training_mode=='minibatch-offline' and self._num_pass is not None:
@@ -414,8 +491,10 @@ class GaussianCopula():
         
 
     def partial_fit(self, X_batch, step_size=0.5, model_update=True, marginal_update=True):
-        if marginal_update:
-            self.transform_function.update_window(X_batch)
+        if not marginal_update:
+            _window = self.transform_function.X 
+            _update_pos = self.transform_function.update_pos
+        self.transform_function.update_window(X_batch)
 
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_batch)
         Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
@@ -430,7 +509,10 @@ class GaussianCopula():
             self._latent_Cord = C_ord
             self.likelihood.append(loglik)
 
-        # attributes to store after model fitting
+        # new points are always used for pseudo-points, but we can revert the running window after corr estimate
+        if not marginal_update:
+            self.transform_function.X = _window
+            self.transform_function.update_pos = _update_pos
         return new_corr
 
     def partial_transform(self, X_batch):
@@ -444,21 +526,23 @@ class GaussianCopula():
         return X_imp
 
 
-    def change_point_test(self, X_batch, step_size, nsamples=100, imputation=False):
+    def change_point_test(self, X_batch, step_size, nsamples=100):
         n,p = X_batch.shape
         missing_indices = np.isnan(X_batch)
         prev_corr = self._corr
         changing_stat = defaultdict(list)
+        self.transform_function.init_window(X_batch)
 
-        rng = np.random.defauly_rng(self._seed)
+        rng = np.random.default_rng(self._seed)
+        X_to_impute = np.zeros_like(X_batch) * np.nan
         for i in range(nsamples):
             z = rng.multivariate_normal(np.zeros(p), prev_corr, n)
             # mask
             x = np.empty((n,p))
-            x[:,self.cont_indices] = self.transform_function.impute_cont_observed(z)
-            x[:,self.ord_indices] = self.transform_function.impute_cont_observed(z)
+            x[:,self.cont_indices] = self.transform_function.impute_cont_observed(z, X_to_impute)
+            x[:,self.ord_indices] = self.transform_function.impute_ord_observed(z, X_to_impute)
             x[missing_indices] = np.nan
-            #
+            # TODO: compare with enabling marginal_update
             new_corr = self.partial_fit(x, step_size=step_size, model_update=False, marginal_update=False)
             diff = self.get_matrix_diff(prev_corr, new_corr, self._corr_diff_type)
             self._update_corr_diff(diff, output=changing_stat)
@@ -470,8 +554,8 @@ class GaussianCopula():
         changing_stat = pd.DataFrame(changing_stat)
         pval = {}
         for t in self._corr_diff_type:
-            pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsample+1)
-        return pval
+            pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsamples+1)
+        return pval, diff
 
 
     def _em_step(self, Z, r_lower, r_upper):
@@ -665,6 +749,17 @@ class GaussianCopula():
 
         return np.linalg.norm(sigma - prev_sigma) / np.linalg.norm(sigma)
 
+
+    def _preprocess_data(self, X, cont_indices):
+        '''
+        Store column names, set continuous/ordinal variable indices and change X to be a numpy array
+        '''
+        if hasattr(X, 'columns'):
+            self.features_names = np.array(X.columns.to_list())
+        X = np.array(X)
+        self.set_indices(X, cont_indices)
+        return X
+
     def set_indices(self, X, cont_indices=None):
         '''
         set variable types
@@ -704,12 +799,7 @@ class GaussianCopula():
         return indices
 
 
-    def _init_latent(self):
-        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent()
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
-        Z_cont = self.transform_function.get_cont_latent()
-        Z = np.concatenate((Z_ord, Z_cont), axis=1)
-        return Z, Z_ord_lower, Z_ord_upper
+    
 
     def _update_loglikelihood(self, iterloglik):
         converged = False

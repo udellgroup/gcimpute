@@ -50,7 +50,7 @@ def get_smae(x_imp, x_true, x_obs,
         if np.sum(test) == 0:
             error[i,0] = np.nan
             error[i,1] = np.nan
-            print(f'There is no entry to be evaluated in variable {col}.')
+            print(f'There is no entry to be evaluated in variable {i}.')
             continue
         
         base_imp = np.median(col[~np.isnan(col)]) if baseline is None else baseline[i]
