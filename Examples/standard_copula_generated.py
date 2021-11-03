@@ -121,7 +121,7 @@ if __name__ == "__main__":
 # ord imputation SMAE: mean 0.818, std 0.027
 # bin imputation SMAE: mean 0.682, std 0.036
 #-----------------------------------------------
-# Run command $ python standard_copula_generated.py --bs 40 --bc 5 --iter 50 -o 1
+# Run command $ python standard_copula_generated.py --bs 40 --bc 5 --iter 50 --online 1
 # Online run 1 pass (batch_c = 5, batch_size = 40)
 #----------------------------------------------
 # when cutoff_by is 'dist'

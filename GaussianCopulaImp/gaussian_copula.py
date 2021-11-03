@@ -167,22 +167,21 @@ class GaussianCopula():
         else:
             return self.fit_offline(X)
 
-    def transform(self, X, impute_seen_data=False, num_ord_updates=2):
+    def transform(self, X=None, num_ord_updates=2):
         '''
-        Fits the Gaussian copula imputer on the input data X.
-
-        Parameters:
-            X: array-like of shape (n_samples, n_features)
-                Input data
-            cont_indices: array-list of int, optional (default=None)
-                If not None, the set of continuout variable indices. 
-                If None, the continuout variable indices will be determined by self.min_ord_ratio.
+        Impute the missing entries in X using currently fitted model (accessed through self._corr). 
+        If X is None, set X as the data used to fit the model.
         '''
-        if self._training_mode == 'minibatch-online':
-            print('transform method is not implemented for minibatch-online mode, since the fitting and imputation are done in the unit of mini-batch. To impute the missing entries, call fit_transform.')
-            raise
+        # get Z
+        if X is None:
+            Z = self._latent_Zimp
         else:
-            return self.transform_offline(X=X, impute_seen_data=impute_seen_data, num_ord_updates=num_ord_updates)
+            Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X)
+            # TODO: complete Z
+            Z = self._fillup_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num_ord_updates=num_ord_updates)
+        # from Z to X
+        X_imp = self._latent_to_imp(Z=Z, X_to_impute=X)
+        return X_imp
 
     def fit_transform(self, X, cont_indices = None):
         '''
@@ -291,7 +290,7 @@ class GaussianCopula():
         Implement fit_transform when the training mode is 'standard' or 'minibatch-offline'
         '''
         self.fit_offline(X, cont_indices)
-        X_imp = self.transform_offline(impute_seen_data=True)
+        X_imp = self.transform()
         return X_imp
 
     def fit_offline(self, X, cont_indices):
@@ -311,19 +310,6 @@ class GaussianCopula():
         self._latent_Zimp = Z_imp
         self._latent_Cord = C_ord
 
-    def transform_offline(self, X=None, impute_seen_data=False, num_ord_updates=2):
-        # get Z
-        if impute_seen_data:
-            Z = self._latent_Zimp
-        else:
-            assert X is not None
-            Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X)
-            # TODO: complete Z
-            Z = self._fillup_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num_ord_updates=num_ord_updates)
-        # from Z to X
-        X_imp = self._latent_to_imp(Z=Z, X_to_impute=X)
-        return X_imp
-
     def fit_transform_online(self, X):
         '''
         Implement fit_transform when the training mode is 'minibatch-online'
@@ -341,6 +327,9 @@ class GaussianCopula():
             if batch_lower>=n:
                 break 
             indices = np.arange(batch_lower, batch_upper, 1)
+            # Use the first batch to initialize the window. Thus in evaluation the first batch should be ignored.
+            if i==0:
+                self.transform_function.update_window(X[indices,:])
             X_imp[indices,:] = self.partial_fit_transform(X[indices,:], step_size=self.stepsize(i+1))
             i+=1
         return X_imp
@@ -483,11 +472,6 @@ class GaussianCopula():
                     Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
         return Z_imp
 
-
-
-    # TO DO: add a function attribute which takes estimated model and new point as input to return immediate imputaiton
-    #  that would serve as out-of-sample prediction without updating the model parameter. Computation will be smaller but the complexity is still O(p^3)
-    # That should be integrated into a separate function method transform() for all out-of-sample prediction
     def partial_fit_transform(self, X_batch, step_size=0.5, marginal_update=True):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
@@ -495,29 +479,25 @@ class GaussianCopula():
 
         Args:
             X_batch (matrix): data matrix with entries to use to update copula and be imputed
-            max_workers (positive int): the maximum number of workers for parallelism 
-            num_ord_updates (positive int): the number of times to re-estimate the latent ordinals per batch
             step_size (float in (0,1)): tunes how much to weight new covariance estimates
         Returns:
             X_imp (matrix): X_batch with missing values imputed
         """
-        
-        #if not update:
-            #old_window = self.transform_function.window
-            #old_update_pos = self.transform_function.update_pos
+        # impute missing entries in new data using previously fitted model
+        # just a step of out-of-sample imputation
+        X_imp = self.transform(X = X_batch, num_ord_updates=self._num_ord_updates)
+        # use new model to update model parameters
         prev_corr = self._corr
         new_corr = self.partial_fit(X_batch=X_batch, step_size=step_size, model_update=True, marginal_update=marginal_update)
         self._corr = new_corr
         diff = self.get_matrix_diff(prev_corr, self._corr, self._corr_diff_type)
         self._update_corr_diff(diff)
-
-        return self.partial_transform(X_batch)
-
+        return X_imp
         
     def partial_fit(self, X_batch, step_size=0.5, model_update=True, marginal_update=True):
         if not marginal_update:
-            _window = self.transform_function.X 
-            _update_pos = self.transform_function.update_pos
+            _window = self.transform_function.X.copy()
+            _update_pos = self.transform_function.update_pos.copy()
         self.transform_function.update_window(X_batch)
 
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_batch)
