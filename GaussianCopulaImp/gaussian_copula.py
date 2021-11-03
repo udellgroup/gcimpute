@@ -1,6 +1,6 @@
 from .transform_function import TransformFunction
 from .online_transform_function import OnlineTransformFunction
-from .embody import _em_step_body_
+from .embody import _em_step_body_, _fillup_latent_body_
 from scipy.stats import norm, truncnorm
 import numpy as np
 import pandas as pd
@@ -167,6 +167,23 @@ class GaussianCopula():
         else:
             return self.fit_offline(X)
 
+    def transform(self, X, impute_seen_data=False, num_ord_updates=2):
+        '''
+        Fits the Gaussian copula imputer on the input data X.
+
+        Parameters:
+            X: array-like of shape (n_samples, n_features)
+                Input data
+            cont_indices: array-list of int, optional (default=None)
+                If not None, the set of continuout variable indices. 
+                If None, the continuout variable indices will be determined by self.min_ord_ratio.
+        '''
+        if self._training_mode == 'minibatch-online':
+            print('transform method is not implemented for minibatch-online mode, since the fitting and imputation are done in the unit of mini-batch. To impute the missing entries, call fit_transform.')
+            raise
+        else:
+            return self.transform_offline(X=X, impute_seen_data=impute_seen_data, num_ord_updates=num_ord_updates)
+
     def fit_transform(self, X, cont_indices = None):
         '''
         Fit to data, then transform it. 
@@ -269,8 +286,6 @@ class GaussianCopula():
         out = {'pval':pvals, 'statistics':test_stats}
         return out
 
-    
-
     def fit_transform_offline(self, X, cont_indices):
         '''
         Implement fit_transform when the training mode is 'standard' or 'minibatch-offline'
@@ -296,15 +311,15 @@ class GaussianCopula():
         self._latent_Zimp = Z_imp
         self._latent_Cord = C_ord
 
-    def transform_offline(self, X=None, impute_seen_data=False):
+    def transform_offline(self, X=None, impute_seen_data=False, num_ord_updates=2):
         # get Z
         if impute_seen_data:
             Z = self._latent_Zimp
         else:
-            raise NotImplementedError
             assert X is not None
             Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X)
             # TODO: complete Z
+            Z = self._fillup_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num_ord_updates=num_ord_updates)
         # from Z to X
         X_imp = self._latent_to_imp(Z=Z, X_to_impute=X)
         return X_imp
@@ -350,24 +365,6 @@ class GaussianCopula():
         if any(self._ord_indices):
             X_imp[:,self._ord_indices] = self.transform_function.impute_ord_observed(Z=Z_imp_rearranged, X_to_impute=X_to_impute)
         return X_imp
-
-    def _observed_to_latent(self, X_to_transform=None):
-        '''
-        Transform data, X_to_transform, in the observed space into values in the latent space.
-        The marginal estimation is done by accessing self.transform_function.X.
-        X_to_transform can be out-of-samples that have never been seen.
-        Args:
-            X_to_transform: (nsamples, nfeatures) or None
-                If None, self.transform_function.X will be used. 
-        '''
-        #if X_to_transform is None:
-        #    X_to_transform = self.transform_function.X
-        Z_cont = self.transform_function.get_cont_latent(X_to_transform)
-        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform)
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
-        Z = np.concatenate((Z_ord, Z_cont), axis=1)
-        return Z, Z_ord_lower, Z_ord_upper
-    
 
     def _observed_to_latent(self, X_to_transform=None):
         if X_to_transform is None:
@@ -460,6 +457,34 @@ class GaussianCopula():
         return  Z_imp, C_ord
 
 
+    def _fillup_latent(self, Z, Z_ord_lower, Z_ord_upper, num_ord_updates=2):
+        '''
+        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
+        '''
+        n, p = Z.shape
+        max_workers = self._max_workers
+
+        if max_workers ==1:
+            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates)
+            Z_imp = _fillup_latent_body_(args)
+        else:
+            divide = n/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [(
+                    np.copy(Z[divide[i]:divide[i+1],:]), 
+                    Z_ord_lower[divide[i]:divide[i+1],:], 
+                    Z_ord_upper[divide[i]:divide[i+1],:], 
+                    self._corr, num_ord_updates
+                    ) for i in range(max_workers)]
+            Z_imp = np.empty((n,p))
+            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
+                res = pool.map(_fillup_latent_body_, args)
+                for i, Z_imp_divide in enumerate(res):
+                    Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
+        return Z_imp
+
+
+
     # TO DO: add a function attribute which takes estimated model and new point as input to return immediate imputaiton
     #  that would serve as out-of-sample prediction without updating the model parameter. Computation will be smaller but the complexity is still O(p^3)
     # That should be integrated into a separate function method transform() for all out-of-sample prediction
@@ -489,7 +514,6 @@ class GaussianCopula():
         return self.partial_transform(X_batch)
 
         
-
     def partial_fit(self, X_batch, step_size=0.5, model_update=True, marginal_update=True):
         if not marginal_update:
             _window = self.transform_function.X 

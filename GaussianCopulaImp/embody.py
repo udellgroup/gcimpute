@@ -216,7 +216,7 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
 
 def _LRGC_em_col_step_body_(args):
     """
-    Does a step of the EM algorithm, needed to dereference args to support parallelism
+    Dereference args to support parallelism
     """
     return _LRGC_em_col_step_body(*args)
 
@@ -242,7 +242,82 @@ def _LRGC_em_col_step_body_col(Z_col, C_ord_col, U_col, sigma, A, S, SS):
     Fj = _sum_3d_scale(SS+sigma*A, c=np.ones(A.shape[0]), index = index_j) 
     w_new = np.linalg.solve(Fj,rj) 
     s = np.dot(rj, w_new)
-    return w_new, s
+    return w_new, 
+
+def _fillup_latent_body_(args):
+    return _fillup_latent_body(*args)
+
+def _fillup_latent_body(Z, r_lower, r_upper, sigma, num_ord_updates):
+    n, p = Z.shape
+    Z_imp = Z.copy()
+    trunc_warn = False
+    for i in range(n):
+        z_imp, warn = _fillup_latent_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates)
+        Z_imp[i] = z_imp
+        trunc_warn = trunc_warn or warn
+    # TO DO: no need to return Z, just edit it during the process
+    if trunc_warn:
+        print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
+    return Z_imp
+
+    # TODO: core computation codes pasted from em_step_body_row now. Should use separate functions to avoid the paste-copy.
+def _fillup_latent_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
+    missing_indices = np.isnan(Z_row)
+    obs_indices = ~missing_indices
+
+    # obtain correlation sub-matrices
+    # obtain submatrices by indexing a "cartesian-product" of index arrays
+    sigma_obs_obs = sigma[np.ix_(obs_indices,obs_indices)]
+    sigma_obs_missing = sigma[np.ix_(obs_indices, missing_indices)]
+    sigma_missing_missing = sigma[np.ix_(missing_indices, missing_indices)]
+
+    if any(missing_indices):
+        tot_matrix = np.concatenate((np.identity(len(sigma_obs_obs)), sigma_obs_missing), axis=1)
+        intermed_matrix = np.linalg.solve(sigma_obs_obs, tot_matrix)
+        sigma_obs_obs_inv = intermed_matrix[:, :len(sigma_obs_obs)]
+        J_obs_missing = intermed_matrix[:, len(sigma_obs_obs):]
+    else:
+        sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs, np.identity(len(sigma_obs_obs)))
+
+
+    # OBSERVED ORDINAL ELEMENTS
+    p, num_ord = Z_row.shape[0], r_upper_row.shape[0]
+    # var_ordinal stores the conditional variance of each variable given all other observation,
+    # it has 0 at observed continuous and missing locations.
+    var_ordinal = np.zeros(p)  
+    ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
+    truncnorm_warn = False
+    if sum(obs_indices) >=2 and any(ord_obs_indices):
+        ord_obs_iter = np.arange(num_ord)[ord_obs_indices[:num_ord]]
+        for update_iter in range(num_ord_updates):
+            # used to efficiently compute conditional mean
+            sigma_obs_obs_inv_Zobs_row = np.dot(sigma_obs_obs_inv, Z_row[obs_indices])
+
+            # TO DO: accelerate is possible. Replace the for-loop with vector/matrix computation.
+            # Essentially, replace the Gauss-Seidel style update with a Jacobi style update for the nonlinear system
+            for j_in_obs, j in enumerate(ord_obs_iter):
+                # j is the location in the p-dim coordinate
+                # j_in_obs is the location of j in the obs-dim coordiate
+                # TODO simplify the iteration command into a single for-loop
+                new_var_ij = (1.0/sigma_obs_obs_inv[j_in_obs, j_in_obs].item())
+                new_std_ij = np.sqrt(new_var_ij)
+                new_mean_ij = Z_row[j] - new_var_ij*sigma_obs_obs_inv_Zobs_row[j_in_obs]
+                a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
+                try:
+                    _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
+                    if np.isfinite(_var):
+                        var_ordinal[j] = _var
+                    if np.isfinite(_mean):
+                        Z_row[j] = _mean
+                except RuntimeWarning:
+                    #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
+                    truncnorm_warn = True
+
+    Z_obs = Z_row[obs_indices]
+    Z_imp_row = np.copy(Z_row)
+    if any(missing_indices):
+        Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs) 
+    return Z_imp_row, truncnorm_warn
 
 
 def _sum_3d_scale(M, c, index):
