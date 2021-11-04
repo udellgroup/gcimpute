@@ -125,3 +125,10 @@ def load_movielens1m_top150():
     stream = pkg_resources.resource_stream(__name__, 'data/movielens1m_top150movie.csv')
     data = pd.read_csv(stream, index_col=0).to_numpy()
     return data
+
+
+def load_FRED():
+    stream = pkg_resources.resource_stream(__name__, 'data/FRED_selected.csv')
+    data = pd.read_csv(stream, index_col=0)
+    data.index = pd.to_datetime(data.index)
+    return data

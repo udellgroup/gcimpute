@@ -259,7 +259,7 @@ class GaussianCopula():
         else:
             raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
 
-    def fit_change_point_test(self, X, cont_indices, nsamples=100, verbose=False):
+    def fit_change_point_test(self, X, cont_indices=None, nsamples=100, verbose=False):
         assert self._training_mode == 'minibatch-online'
         X = self._preprocess_data(X, cont_indices)
         self.transform_function = OnlineTransformFunction(self._cont_indices, self._ord_indices, window_size=self._window_size)
@@ -277,10 +277,14 @@ class GaussianCopula():
             if verbose:
                 print(f'start batch {i+1}')
             indices = np.arange(batch_lower, batch_upper, 1)
+            # Use the first batch to initialize the window. Thus in evaluation the first batch should be ignored.
+            if i==0:
+                self.transform_function.init_window(X[indices,:])
             _pval, _diff = self.change_point_test(X[indices,:], step_size=self.stepsize(i+1), nsamples=nsamples)
-            for t in self._corr_diff_type:
-                pvals[t].append(_pval[t])
-                test_stats[t].append(_diff[t])
+            if nsamples>0:
+                for t in self._corr_diff_type:
+                    pvals[t].append(_pval[t])
+                    test_stats[t].append(_diff[t])
             i+=1
         out = {'pval':pvals, 'statistics':test_stats}
         return out
@@ -487,9 +491,8 @@ class GaussianCopula():
         # just a step of out-of-sample imputation
         X_imp = self.transform(X = X_batch, num_ord_updates=self._num_ord_updates)
         # use new model to update model parameters
-        prev_corr = self._corr
+        prev_corr = self._corr.copy()
         new_corr = self.partial_fit(X_batch=X_batch, step_size=step_size, model_update=True, marginal_update=marginal_update)
-        self._corr = new_corr
         diff = self.get_matrix_diff(prev_corr, self._corr, self._corr_diff_type)
         self._update_corr_diff(diff)
         return X_imp
@@ -533,9 +536,8 @@ class GaussianCopula():
     def change_point_test(self, X_batch, step_size, nsamples=100):
         n,p = X_batch.shape
         missing_indices = np.isnan(X_batch)
-        prev_corr = self._corr
+        prev_corr = self._corr.copy()
         changing_stat = defaultdict(list)
-        self.transform_function.init_window(X_batch)
 
         rng = np.random.default_rng(self._seed)
         X_to_impute = np.zeros_like(X_batch) * np.nan
@@ -551,14 +553,16 @@ class GaussianCopula():
             diff = self.get_matrix_diff(prev_corr, new_corr, self._corr_diff_type)
             self._update_corr_diff(diff, output=changing_stat)
 
-        new_corr = self.partial_fit(x, step_size=step_size, model_update=True, marginal_update=True)
+        new_corr = self.partial_fit(X_batch, step_size=step_size, model_update=True, marginal_update=True)
         diff = self.get_matrix_diff(prev_corr, new_corr, self._corr_diff_type)
+        self._update_corr_diff(diff)
 
         # compute empirical p-values
         changing_stat = pd.DataFrame(changing_stat)
         pval = {}
-        for t in self._corr_diff_type:
-            pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsamples+1)
+        if nsamples>0:
+            for t in self._corr_diff_type:
+                pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsamples+1)
         return pval, diff
 
 
@@ -853,7 +857,6 @@ class GaussianCopula():
             # TODO: also check dict names
             assert isinstance(output, dict)
             to_append = output 
-        to_append = self.corr_diff if output is None else output
         for t in self._corr_diff_type:
             to_append[t].append(corr_diff[t])
 
