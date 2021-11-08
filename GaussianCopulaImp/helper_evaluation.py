@@ -103,7 +103,8 @@ def get_smae_batch(x_imp, x_true, x_obs,
     if per_type:
         scaled_diffs = {}
         for name, val in var_types.items():
-            scaled_diffs[name] = np.nanmean(result[:,val], axis=1)
+            if len(val)>0:
+                scaled_diffs[name] = np.nanmean(result[:,val], axis=1)
     else:
         scaled_diffs = result
 

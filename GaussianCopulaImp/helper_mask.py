@@ -1,20 +1,23 @@
 import numpy as np 
 
-def mask_types(X, mask_num, seed):
+def mask_types(X, mask_num, seed, var_types):
     """
     Masks mask_num entries of the continuous, ordinal, and binary columns of X
     """
-    if X.shape[1] % 3 != 0:
-        raise NotImplementedError('Current implementation requires three types of variables have the same number of variables')
+    p = sum([len(x) for x in var_types.values()])
+    if X.shape[1] != p:
+        print('Inconsistent data and var types')
+        raise
     X_masked = np.copy(X)
     mask_indices = []
     num_rows, num_cols = X_masked.shape
     num_cols_type = num_cols // 3
     np.random.seed(seed)
-    for i in range(num_rows):
-        for index_start in [0, num_cols_type, 2*num_cols_type]:
-            rand_idx = np.random.choice(num_cols_type, mask_num, False) + index_start
-            X_masked[i, rand_idx] = np.nan
+    for _type, _index in var_types.items():
+        for i, row in enumerate(X_masked):
+            if len(_index)>0:
+                rand_idx = np.random.choice(_index, mask_num, False)
+                row[rand_idx] = np.nan
 
     return X_masked
 
