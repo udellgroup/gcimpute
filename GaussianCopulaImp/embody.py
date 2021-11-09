@@ -30,6 +30,29 @@ def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates):
         print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
     return C, Z_imp, Z, C_ord, loglik
 
+def _prepare_quantity_GC(missing_indices, sigma):
+    obs_indices = ~missing_indices
+
+    # obtain correlation sub-matrices
+    # obtain submatrices by indexing a "cartesian-product" of index arrays
+    sigma_obs_obs = sigma[np.ix_(obs_indices,obs_indices)]
+    sigma_obs_missing = sigma[np.ix_(obs_indices, missing_indices)]
+    sigma_missing_missing = sigma[np.ix_(missing_indices, missing_indices)]
+
+    out = {'sigma_missing_missing':sigma_missing_missing, 'sigma_obs_missing':sigma_obs_missing, 'sigma_obs_obs':sigma_obs_obs}
+
+    if any(missing_indices):
+        tot_matrix = np.concatenate((np.identity(len(sigma_obs_obs)), sigma_obs_missing), axis=1)
+        intermed_matrix = np.linalg.solve(sigma_obs_obs, tot_matrix)
+        sigma_obs_obs_inv = intermed_matrix[:, :len(sigma_obs_obs)]
+        J_obs_missing = intermed_matrix[:, len(sigma_obs_obs):]
+    else:
+        sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs, np.identity(len(sigma_obs_obs)))
+        J_obs_missing = None
+    out['J_obs_missing'] = J_obs_missing
+    out['sigma_obs_obs_inv'] = sigma_obs_obs_inv
+
+    return out
 
 def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
     """
@@ -52,72 +75,39 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
     missing_indices = np.isnan(Z_row)
     obs_indices = ~missing_indices
 
-    # obtain correlation sub-matrices
-    # obtain submatrices by indexing a "cartesian-product" of index arrays
-    sigma_obs_obs = sigma[np.ix_(obs_indices,obs_indices)]
-    sigma_obs_missing = sigma[np.ix_(obs_indices, missing_indices)]
-    sigma_missing_missing = sigma[np.ix_(missing_indices, missing_indices)]
+    p, num_ord = Z_row.shape[0], r_upper_row.shape[0]
+    ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
 
-    if any(missing_indices):
-        tot_matrix = np.concatenate((np.identity(len(sigma_obs_obs)), sigma_obs_missing), axis=1)
-        intermed_matrix = np.linalg.solve(sigma_obs_obs, tot_matrix)
-        sigma_obs_obs_inv = intermed_matrix[:, :len(sigma_obs_obs)]
-        J_obs_missing = intermed_matrix[:, len(sigma_obs_obs):]
-    else:
-        sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs, np.identity(len(sigma_obs_obs)))
-
+    out = _prepare_quantity_GC(missing_indices, sigma)
+    sigma_obs_obs_inv = out['sigma_obs_obs_inv']
+    sigma_obs_obs = out['sigma_obs_obs']
+    sigma_missing_missing = out['sigma_missing_missing']
+    J_obs_missing = out['J_obs_missing']
+    sigma_obs_missing = out['sigma_obs_missing']
 
     # OBSERVED ORDINAL ELEMENTS
-    # when there is an observed ordinal to be imputed and another observed dimension, impute this ordinal
-    # The update here only requires the observed variables, but needs to use the relative location of 
-    # ordinal variables in all observed variables. 
-    # TO DO: the updating order of ordinal variables may make a difference in the algorithm statbility
-    # initialize vector of variances for observed ordinal dimensions
-    p, num_ord = Z_row.shape[0], r_upper_row.shape[0]
-    # var_ordinal stores the conditional variance of each variable given all other observation,
-    # it has 0 at observed continuous and missing locations.
-    var_ordinal = np.zeros(p)  
-    ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
-    truncnorm_warn = False
-    if sum(obs_indices) >=2 and any(ord_obs_indices):
-        ord_obs_iter = np.arange(num_ord)[ord_obs_indices[:num_ord]]
-        for update_iter in range(num_ord_updates):
-            # used to efficiently compute conditional mean
-            sigma_obs_obs_inv_Zobs_row = np.dot(sigma_obs_obs_inv, Z_row[obs_indices])
-
-            # TO DO: accelerate is possible. Replace the for-loop with vector/matrix computation.
-            # Essentially, replace the Gauss-Seidel style update with a Jacobi style update for the nonlinear system
-            for j_in_obs, j in enumerate(ord_obs_iter):
-                # j is the location in the p-dim coordinate
-                # j_in_obs is the location of j in the obs-dim coordiate
-                # TODO simplify the iteration command into a single for-loop
-                new_var_ij = (1.0/sigma_obs_obs_inv[j_in_obs, j_in_obs].item())
-                new_std_ij = np.sqrt(new_var_ij)
-                new_mean_ij = Z_row[j] - new_var_ij*sigma_obs_obs_inv_Zobs_row[j_in_obs]
-                a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
-                try:
-                    _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
-                    if np.isfinite(_var):
-                        var_ordinal[j] = _var
-                    if np.isfinite(_mean):
-                        Z_row[j] = _mean
-                except RuntimeWarning:
-                    #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
-                    truncnorm_warn = True
+    sigma_obs_obs_inv_Zobs_row_func = lambda z_row_obs, sigma_obs_obs_inv=sigma_obs_obs_inv: np.dot(sigma_obs_obs_inv, z_row_obs)
+    Z_row, var_ordinal, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
+                                                           r_lower_row=r_lower_row, 
+                                                           r_upper_row=r_upper_row, 
+                                                           num_ord_updates=num_ord_updates,
+                                                           sigma_obs_obs_inv_Zobs_row_func = sigma_obs_obs_inv_Zobs_row_func,
+                                                           sigma_obs_obs_inv_diag=np.diag(sigma_obs_obs_inv)
+                                                           )
 
     # initialize C 
     C = np.diag(var_ordinal)
 
     # MISSING ELEMENTS
     Z_obs = Z_row[obs_indices]
-    Z_imp_row = np.copy(Z_row)
+    Z_imp_row = Z_row.copy()
     if any(missing_indices):
         # impute missing entries
         Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs) 
         # expected covariance in the missing dimensions
         C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
         # expected covariance brought due to the oridnal entries
-        if np.sum(var_ordinal) > 0: 
+        if var_ordinal.sum() > 0: 
             ord_in_obs = np.arange(sum(ord_obs_indices))
             cov_missing_obs_ord = J_obs_missing[ord_in_obs].T * var_ordinal[ord_obs_indices]
             C[np.ix_(missing_indices, ord_obs_indices)] += cov_missing_obs_ord
@@ -170,7 +160,7 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
     rank = U.shape[1]
     missing_indices = np.isnan(Z_row)
     obs_indices = ~missing_indices
-    zi_obs = Z_row[obs_indices]
+    
     Ui_obs = U[obs_indices,:]
     UU_obs = np.dot(Ui_obs.T, Ui_obs) 
 
@@ -179,30 +169,20 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
     Ai = res[:,:rank]
     AU = res[:,rank:]
 
-    p, num_ord = Z_row.shape[0], r_upper_row.shape[0]
-    var_ordinal = np.zeros(p)  
-    ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
-    truncnorm_warn = False
-    if sum(obs_indices) >=2 and any(ord_obs_indices):
-        ord_obs_iter = np.arange(num_ord)[ord_obs_indices[:num_ord]]
-        for _ in range(num_ord_updates):
-            mu = (zi_obs - np.dot(Ui_obs, np.dot(AU, zi_obs)))/sigma
+    sigma_obs_obs_inv_Zobs_row_func = lambda z_obs, U_obs=Ui_obs, AU=AU, sigma=sigma: (z_obs - np.dot(U_obs, np.dot(AU, z_obs)))/sigma
+    sigma_obs_obs_inv_diag = (1 - np.einsum('ij, jk, ki -> i', Ui_obs, Ai, Ui_obs.T))/sigma
 
-            for j_in_obs, j in enumerate(ord_obs_iter):
-                new_var_ij  = sigma/(1 - np.dot(U[j,:].T, np.dot(Ai, U[j,:])))
-                new_std_ij = np.sqrt(new_var_ij)
-                new_mean_ij = Z_row[j] - new_var_ij*mu[j_in_obs]
-                a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
-                try:
-                    _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
-                    if np.isfinite(_var):
-                        var_ordinal[j] = _var
-                    if np.isfinite(_mean):
-                        Z_row[j] = _mean
-                except RuntimeWarning:
-                    truncnorm_warn = True
-
-
+    zi_obs = Z_row[obs_indices]
+    Z_row, var_ordinal, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
+                                                           r_lower_row=r_lower_row, 
+                                                           r_upper_row=r_upper_row, 
+                                                           num_ord_updates=num_ord_updates,
+                                                           sigma_obs_obs_inv_Zobs_row_func = sigma_obs_obs_inv_Zobs_row_func,
+                                                           sigma_obs_obs_inv_diag = sigma_obs_obs_inv_diag)
+    # WARNING: 
+    # In the use case where all data are ordinal, using latent values before ordinal update gives better parameter estimation 
+    # Need to understand why that happens.
+    # zi_obs = Z_row[obs_indices]
     si = np.dot(AU, zi_obs)
     ssi = np.dot(AU * var_ordinal[obs_indices], AU.T) + np.outer(si, si.T)
 
@@ -213,6 +193,7 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
 
     zi_obs_norm = np.power(zi_obs, 2).sum()
     return Z_row, Ai, si, ssi, var_ordinal, loglik, zi_obs_norm, truncnorm_warn
+
 
 def _LRGC_em_col_step_body_(args):
     """
@@ -242,7 +223,7 @@ def _LRGC_em_col_step_body_col(Z_col, C_ord_col, U_col, sigma, A, S, SS):
     Fj = _sum_3d_scale(SS+sigma*A, c=np.ones(A.shape[0]), index = index_j) 
     w_new = np.linalg.solve(Fj,rj) 
     s = np.dot(rj, w_new)
-    return w_new, 
+    return w_new, s
 
 def _fillup_latent_body_(args):
     return _fillup_latent_body(*args)
@@ -260,58 +241,24 @@ def _fillup_latent_body(Z, r_lower, r_upper, sigma, num_ord_updates):
         print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
     return Z_imp
 
-    # TODO: core computation codes pasted from em_step_body_row now. Should use separate functions to avoid the paste-copy.
 def _fillup_latent_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
     missing_indices = np.isnan(Z_row)
     obs_indices = ~missing_indices
 
-    # obtain correlation sub-matrices
-    # obtain submatrices by indexing a "cartesian-product" of index arrays
-    sigma_obs_obs = sigma[np.ix_(obs_indices,obs_indices)]
-    sigma_obs_missing = sigma[np.ix_(obs_indices, missing_indices)]
-    sigma_missing_missing = sigma[np.ix_(missing_indices, missing_indices)]
-
-    if any(missing_indices):
-        tot_matrix = np.concatenate((np.identity(len(sigma_obs_obs)), sigma_obs_missing), axis=1)
-        intermed_matrix = np.linalg.solve(sigma_obs_obs, tot_matrix)
-        sigma_obs_obs_inv = intermed_matrix[:, :len(sigma_obs_obs)]
-        J_obs_missing = intermed_matrix[:, len(sigma_obs_obs):]
-    else:
-        sigma_obs_obs_inv = np.linalg.solve(sigma_obs_obs, np.identity(len(sigma_obs_obs)))
+    out = _prepare_quantity_GC(missing_indices, sigma)
+    sigma_obs_obs_inv = out['sigma_obs_obs_inv']
+    J_obs_missing = out['J_obs_missing']
 
 
     # OBSERVED ORDINAL ELEMENTS
-    p, num_ord = Z_row.shape[0], r_upper_row.shape[0]
-    # var_ordinal stores the conditional variance of each variable given all other observation,
-    # it has 0 at observed continuous and missing locations.
-    var_ordinal = np.zeros(p)  
-    ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
-    truncnorm_warn = False
-    if sum(obs_indices) >=2 and any(ord_obs_indices):
-        ord_obs_iter = np.arange(num_ord)[ord_obs_indices[:num_ord]]
-        for update_iter in range(num_ord_updates):
-            # used to efficiently compute conditional mean
-            sigma_obs_obs_inv_Zobs_row = np.dot(sigma_obs_obs_inv, Z_row[obs_indices])
-
-            # TO DO: accelerate is possible. Replace the for-loop with vector/matrix computation.
-            # Essentially, replace the Gauss-Seidel style update with a Jacobi style update for the nonlinear system
-            for j_in_obs, j in enumerate(ord_obs_iter):
-                # j is the location in the p-dim coordinate
-                # j_in_obs is the location of j in the obs-dim coordiate
-                # TODO simplify the iteration command into a single for-loop
-                new_var_ij = (1.0/sigma_obs_obs_inv[j_in_obs, j_in_obs].item())
-                new_std_ij = np.sqrt(new_var_ij)
-                new_mean_ij = Z_row[j] - new_var_ij*sigma_obs_obs_inv_Zobs_row[j_in_obs]
-                a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
-                try:
-                    _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
-                    if np.isfinite(_var):
-                        var_ordinal[j] = _var
-                    if np.isfinite(_mean):
-                        Z_row[j] = _mean
-                except RuntimeWarning:
-                    #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
-                    truncnorm_warn = True
+    sigma_obs_obs_inv_Zobs_row_func = lambda z_row_obs, sigma_obs_obs_inv=sigma_obs_obs_inv: np.dot(sigma_obs_obs_inv, z_row_obs)
+    Z_row, _, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
+                                                 r_lower_row=r_lower_row, 
+                                                 r_upper_row=r_upper_row, 
+                                                 num_ord_updates=num_ord_updates,
+                                                 sigma_obs_obs_inv_Zobs_row_func = sigma_obs_obs_inv_Zobs_row_func,
+                                                 sigma_obs_obs_inv_diag=np.diag(sigma_obs_obs_inv)
+                                                 )
 
     Z_obs = Z_row[obs_indices]
     Z_imp_row = np.copy(Z_row)
@@ -319,6 +266,103 @@ def _fillup_latent_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_upda
         Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs) 
     return Z_imp_row, truncnorm_warn
 
+def _sample_latent_body_(args):
+    return _sample_latent_body(*args)
+
+def _sample_latent_body(Z, r_lower, r_upper, sigma, num, seed, num_ord_updates):
+    n, p = Z.shape
+    Z_imp_num = np.empty((n,p,num))
+    trunc_warn = False
+    for i, Z_row in enumerate(Z):
+        missing_indices = np.isnan(Z_row)
+        if any(missing_indices):
+            z_imp, warn = _sample_latent_body_row(Z_row, r_lower[i], r_upper[i], sigma, num, seed, num_ord_updates)
+            Z_imp_num[i, missing_indices, :] = z_imp
+            trunc_warn = trunc_warn or warn
+    if trunc_warn:
+        print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
+    return Z_imp_num
+
+def _sample_latent_body_row(Z_row, r_lower_row, r_upper_row, sigma, num, seed, num_ord_updates):
+    missing_indices = np.isnan(Z_row)
+    obs_indices = ~missing_indices
+
+    if any(missing_indices):
+        out = _prepare_quantity_GC(missing_indices, sigma)
+        sigma_obs_obs_inv = out['sigma_obs_obs_inv']
+        sigma_obs_missing = out['sigma_obs_missing']
+        sigma_missing_missing = out['sigma_missing_missing']
+        J_obs_missing = out['J_obs_missing']
+        sigma_obs_missing = out['sigma_obs_missing']
+
+        # OBSERVED ORDINAL ELEMENTS
+        sigma_obs_obs_inv_Zobs_row_func = lambda z_row_obs, sigma_obs_obs_inv=sigma_obs_obs_inv: np.dot(sigma_obs_obs_inv, z_row_obs)
+        Z_row, _, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
+                                                     r_lower_row=r_lower_row, 
+                                                     r_upper_row=r_upper_row, 
+                                                     num_ord_updates=num_ord_updates,
+                                                     sigma_obs_obs_inv_Zobs_row_func = sigma_obs_obs_inv_Zobs_row_func,
+                                                     sigma_obs_obs_inv_diag=np.diag(sigma_obs_obs_inv)
+                                                     )
+
+        Z_obs = Z_row[obs_indices]
+        np.random.seed(seed)
+        cond_mean = np.matmul(J_obs_missing.T,Z_obs)
+        cond_cov = sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
+        Z_imp_num = np.random.multivariate_normal(mean=cond_mean, cov=cond_cov, size=num)
+        # Z_imp_num has shape (n_mis, num)
+        Z_imp_num = Z_imp_num.T
+    else:
+        Z_imp_num = None
+        truncnorm_warn = False
+
+    return Z_imp_num, truncnorm_warn
+
+def _update_z_row_ord(z_row, r_lower_row, r_upper_row, num_ord_updates, sigma_obs_obs_inv_Zobs_row_func, sigma_obs_obs_inv_diag):
+    '''
+    For a row, modify the conditional mean and compute the conditional var at ordinal entries.
+
+    Args:
+        sigma_obs_obs_inv_Zobs_row_func: A function that takes z_obs (array like of shape (n_obs, )) as input and return sigma_obs_obs_inv_Zobs_row (array like of shape (n_obs, ))  as output
+            The matrix-vector product Sigma_{obs, obs}^{-1} * z_{obs}
+        sigma_obs_obs_inv_diag: array of shape (nobs, )
+            The diagonal of Sigma_{obs, obs}^{-1} 
+    '''
+    p, num_ord = z_row.shape[0], r_upper_row.shape[0]
+    var_ordinal = np.zeros(p)
+
+    obs_indices = ~np.isnan(z_row)
+    ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
+    truncnorm_warn = False
+
+    # when there is an observed ordinal to be imputed and another observed dimension, impute this ordinal
+    # The update here only requires the observed variables, but needs to use the relative location of 
+    # ordinal variables in all observed variables. 
+    # TO DO: the updating order of ordinal variables may make a difference in the algorithm statbility
+    # initialize vector of variances for observed ordinal dimensions
+    if sum(obs_indices) >=2 and any(ord_obs_indices):
+        ord_obs_iter = np.arange(num_ord)[ord_obs_indices[:num_ord]]
+        for _ in range(num_ord_updates):
+            sigma_obs_obs_inv_Zobs_row = sigma_obs_obs_inv_Zobs_row_func(z_row[obs_indices])
+            # TO DO: accelerate is possible. Replace the for-loop with vector/matrix computation.
+            # Essentially, replace the Gauss-Seidel style update with a Jacobi style update for the nonlinear system
+            for j_in_obs, j in enumerate(ord_obs_iter):
+                # j is the location in the p-dim coordinate
+                # j_in_obs is the location of j in the obs-dim coordiate
+                new_var_ij = 1.0/sigma_obs_obs_inv_diag[j_in_obs]
+                new_std_ij = np.sqrt(new_var_ij)
+                new_mean_ij = z_row[j] - new_var_ij*sigma_obs_obs_inv_Zobs_row[j_in_obs]
+                a_ij, b_ij = (r_lower_row[j] - new_mean_ij) / new_std_ij, (r_upper_row[j] - new_mean_ij) / new_std_ij
+                try:
+                    _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
+                    if np.isfinite(_var):
+                        var_ordinal[j] = _var
+                    if np.isfinite(_mean):
+                        z_row[j] = _mean
+                except RuntimeWarning:
+                    #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
+                    truncnorm_warn = True
+    return z_row, var_ordinal, truncnorm_warn
 
 def _sum_3d_scale(M, c, index):
     res = np.empty((M.shape[1], M.shape[2]))

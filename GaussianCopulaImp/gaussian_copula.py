@@ -259,6 +259,51 @@ class GaussianCopula():
         else:
             raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
 
+
+    def sample_imputation(self, X=None, num=5, num_ord_updates=1):
+        '''
+        Sample multiple imputed datasets using the currently fitted method.
+        If X is None, set X as the data used to fit the model.
+        '''
+        if X is None:
+            X = self.transform_function.X
+        Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X)
+        # TODO: complete Z
+        Z_imp_num = self._sample_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num=num, num_ord_updates=num_ord_updates) 
+        X_imp_num = np.zeros_like(Z_imp_num)
+        for i in range(num):
+            X_imp_num[...,i] = self._latent_to_imp(Z=Z_imp_num[...,i], X_to_impute=X)
+        return X_imp_num
+
+    def _sample_latent(self, Z, Z_ord_lower, Z_ord_upper, num, num_ord_updates=2):
+        '''
+        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
+        '''
+        n, p = Z.shape
+        max_workers = self._max_workers
+
+        if max_workers ==1:
+            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num, self._seed, num_ord_updates)
+            Z_imp = _sample_latent_body_(args)
+        else:
+            divide = n/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [(
+                    np.copy(Z[divide[i]:divide[i+1],:]), 
+                    Z_ord_lower[divide[i]:divide[i+1],:], 
+                    Z_ord_upper[divide[i]:divide[i+1],:], 
+                    self._corr, 
+                    num, self._seed, num_ord_updates
+                    ) for i in range(max_workers)]
+            Z_imp_num = np.empty((n,p,num))
+            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
+                res = pool.map(_sample_latent_body_, args)
+                for i, Z_imp_divide in enumerate(res):
+                    Z_imp_num[divide[i]:divide[i+1],...] = Z_imp_divide
+        return Z_imp_num
+
+
+
     def fit_change_point_test(self, X, cont_indices=None, nsamples=100, verbose=False):
         assert self._training_mode == 'minibatch-online'
         X = self._preprocess_data(X, cont_indices)
@@ -377,7 +422,6 @@ class GaussianCopula():
                 Transformed latent matrix
             Z_ord_upper, Z_ord_lower (nsamples, nfeatures_ord)
                 Upper and lower bound to sample from
-
         Returns:
             C_ord
             Z_imp (nsamples, nfeatures)

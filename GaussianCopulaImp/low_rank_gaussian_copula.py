@@ -118,19 +118,10 @@ class LowRankGaussianCopula(GaussianCopula):
                 std_cond[i, missing_indices] = np.sqrt(_var)
         return std_cond
 
-    def _fit_covariance(self, X):
+    def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper):
         """
-        Estimate the covariance parameters of the low rank Gaussian copula, W and sigma, 
-        using the data in X and return the estimates and related quantity. 
-        Different from the full rank case, imputation is not conducted in this step.
-
-        Args:
-            X (matrix): data matrix with entries to be imputed
-        Returns:
-            Z (matrix): the transformed value, at observed continuous entry; the conditional mean, at observed ordinal entry; NA elsewhere
-            C (matrix): 0 at observed continuous entry; the conditional variance, at observed ordinal entry; NA elsewhere
+        See the doc for _fit_covariance in class GaussianCopula()
         """
-        Z, Z_ord_lower, Z_ord_upper = self._init_latent()
 
         # Refine Z_imp using truncated (low-rank) SVD for missing entries to obtain initial parameter estimate
         Z_imp = Z.copy()
@@ -139,7 +130,8 @@ class LowRankGaussianCopula(GaussianCopula):
         # Update entries at obseved ordinal locations from SVD initialization
         if any(self.ord_indices):
             obs_ord = ~np.isnan(Z_ord_lower)
-            Z[:,:sum(self.ord_indices)][obs_ord] = Z_imp[:,:sum(self.ord_indices)][obs_ord].copy()
+            num_ord = sum(self.ord_indices)
+            Z[:,:num_ord][obs_ord] = Z_imp[:,:num_ord][obs_ord].copy()
 
         # initialize the parameter estimate 
         corr = np.corrcoef(Z_imp, rowvar=False)

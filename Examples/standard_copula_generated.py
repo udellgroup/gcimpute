@@ -17,7 +17,7 @@ def run_onerep(seed, n=2000, batch_size= 40, batch_c=0, max_iter=50, online=Fals
 			   MASK_NUM=2, threshold=0.01, max_workers=4, cutoff_by='dist'):
 	sigma = generate_sigma(seed, p=sum([len(value) for value in var_types.values()]))
 	X = generate_mixed_from_gc(sigma=sigma, n=n, seed=seed, var_types=var_types, cutoff_by=cutoff_by)
-	X_masked = mask_types(X, MASK_NUM, seed=seed)
+	X_masked = mask_types(X, MASK_NUM, seed=seed, var_types=var_types)
 	# model fitting
 	
 	p = sum([len(x) for x in var_types.values()])
