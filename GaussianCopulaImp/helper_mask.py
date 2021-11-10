@@ -20,27 +20,12 @@ def mask_types(X, mask_num, seed, var_types):
                 row[rand_idx] = np.nan
 
     return X_masked
-
-def mask_MCAR(X, mask_fraction, seed=1, max_try=50):
-    '''
-    Randomly mask a proportion of observed entries by sampling without replacement.
-    Args:
-        X: array like of shape (n_samples, n_features)
-            The data to be masked. Can be incomplete itself. 
-        ratio: float in (0,1)
-            The masking is done by sampling from all observed entries without replacement.
-    '''
-    return mask(X, mask_fraction, seed, max_try)
-    
     
 
-def mask(X, mask_fraction, seed=0, max_try=50):
+def mask_MCAR(X, mask_fraction, seed=1, max_try=50, allow_empty_row=False):
     """
     Masks mask_fraction entries of X, raising a value error if an entire row is masked
     """
-    if hasattr(X, 'columns'):
-        columns = X.columns
-        X = np.array()
     rng = np.random.default_rng(seed)
     count = 0
     X_masked = np.copy(X) 
@@ -53,7 +38,7 @@ def mask(X, mask_fraction, seed=0, max_try=50):
         mask_coors = obs_coors[mask_indices]
         X_masked[mask_coors[:,0], mask_coors[:,1]] = np.nan
         # the masking is acceptable if there is no empty row
-        if np.isnan(X_masked).sum(axis=1).max() < p:
+        if allow_empty_row or np.isnan(X_masked).sum(axis=1).max() < p:
             break
         else:
             count += 1

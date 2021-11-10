@@ -127,12 +127,13 @@ def load_GSS(cols=None, to_array = False):
     stream = pkg_resources.resource_stream(__name__, 'data/GSS_2014_18var.csv')
     data = pd.read_csv(stream, index_col=0)
     _cols = data.columns.tolist()
-    if cols is not None:  
-        try:
-            data = data[cols]
-        except KeyError:
-            print(f'{cols} must be a subset of {_cols}')
-            raise
+    if cols is None:
+        cols = ['AGE', 'DEGREE', 'RINCOME', 'CLASS_', 'SATJOB', 'WEEKSWRK', 'HAPPY', 'HEALTH', 'SOCBAR']
+    try:
+        data = data[cols]
+    except KeyError:
+        print(f'{cols} must be a subset of {_cols}')
+        raise
     return np.array(data) if to_array else data
 
 def load_movielens1m_top150():
@@ -145,4 +146,9 @@ def load_FRED():
     stream = pkg_resources.resource_stream(__name__, 'data/FRED_selected.csv')
     data = pd.read_csv(stream, index_col=0)
     data.index = pd.to_datetime(data.index)
+    return data
+
+def load_whitewine():
+    stream = pkg_resources.resource_stream(__name__, 'data/winequality-white.csv')
+    data = pd.read_csv(stream, sep=';')
     return data

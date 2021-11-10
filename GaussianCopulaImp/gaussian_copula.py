@@ -1,6 +1,6 @@
 from .transform_function import TransformFunction
 from .online_transform_function import OnlineTransformFunction
-from .embody import _em_step_body_, _fillup_latent_body_
+from .embody import _em_step_body_, _fillup_latent_body_, _sample_latent_body_
 from scipy.stats import norm, truncnorm
 import numpy as np
 import pandas as pd
@@ -177,7 +177,6 @@ class GaussianCopula():
             Z = self._latent_Zimp
         else:
             Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X)
-            # TODO: complete Z
             Z = self._fillup_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num_ord_updates=num_ord_updates)
         # from Z to X
         X_imp = self._latent_to_imp(Z=Z, X_to_impute=X)
@@ -219,18 +218,19 @@ class GaussianCopula():
         params = {'copula_corr': corr_rearranged}
         return params
 
-    def get_imputed_confidence_interval(self, alpha = 0.95):
+    def get_imputed_confidence_interval(self, X=None, alpha = 0.95, num_ord_updates=1):
         '''
         Compute the confidence interval for each imputed entry, only applicable when all variables are continuous variables.
         '''
         if self._training_mode == 'minibatch-online':
             raise NotImplementedError('Confidence interval has not yet been supported for minibatch-online mode')
         assert all(self._cont_indices), 'confidence interval is only available for datasets with all continuous variables'
-        try:
+        if X is None:
             Zimp = self._latent_Zimp
-        except AttributeError:
-            print(f'Cannot form confidence intervals before model fitting and imputation')
-            raise 
+        else:
+            Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X)
+            Zimp = self._fillup_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num_ord_updates=num_ord_updates)
+            
         n, p = Zimp.shape
         margin = norm.ppf(1-(1-alpha)/2)
 
@@ -264,6 +264,16 @@ class GaussianCopula():
         '''
         Sample multiple imputed datasets using the currently fitted method.
         If X is None, set X as the data used to fit the model.
+        Args:
+            X: array of shape (n_samples, n_features) or None.
+                The dataset to be imputed. Use the seen data for model fitting if None.
+            num: int
+                The number of imputation samples to draw.
+            num_ord_updates: int
+                The number of iterations to perform for estimating latent mean at ordinals.
+        Return:
+            X_imp_num: array of shape (n_samples, n_features, num)
+                Imputed dataset.
         '''
         if X is None:
             X = self.transform_function.X
@@ -284,7 +294,7 @@ class GaussianCopula():
 
         if max_workers ==1:
             args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num, self._seed, num_ord_updates)
-            Z_imp = _sample_latent_body_(args)
+            Z_imp_num = _sample_latent_body_(args)
         else:
             divide = n/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
@@ -860,7 +870,7 @@ class GaussianCopula():
         if self._training_mode == 'standard' and len(loglik)>1 and loglik[-1] >= loglik[-2]:
             change_ratio = self._get_scaled_diff(loglik[-2], loglik[-1])
             if change_ratio<self._likel_threshold:
-                if self._verbose>0: 
+                if self._verbose>1: 
                     print(f'early stop because the likelihood increase is below {self._likel_threshold}')
                 converged = True
         return converged
