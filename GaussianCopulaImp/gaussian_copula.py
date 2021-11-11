@@ -224,7 +224,6 @@ class GaussianCopula():
         '''
         if self._training_mode == 'minibatch-online':
             raise NotImplementedError('Confidence interval has not yet been supported for minibatch-online mode')
-        assert all(self._cont_indices), 'confidence interval is only available for datasets with all continuous variables'
         if X is None:
             Zimp = self._latent_Zimp
         else:
