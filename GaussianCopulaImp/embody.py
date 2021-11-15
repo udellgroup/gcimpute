@@ -231,15 +231,17 @@ def _fillup_latent_body_(args):
 def _fillup_latent_body(Z, r_lower, r_upper, sigma, num_ord_updates):
     n, p = Z.shape
     Z_imp = Z.copy()
+    C_ord = np.zeros_like(Z)
     trunc_warn = False
     for i in range(n):
-        z_imp, warn = _fillup_latent_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates)
+        z_imp, c_ord, warn = _fillup_latent_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates)
         Z_imp[i] = z_imp
+        C_ord[i] = c_ord
         trunc_warn = trunc_warn or warn
     # TO DO: no need to return Z, just edit it during the process
     if trunc_warn:
         print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
-    return Z_imp
+    return Z_imp, C_ord
 
 def _fillup_latent_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
     missing_indices = np.isnan(Z_row)
@@ -252,7 +254,7 @@ def _fillup_latent_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_upda
 
     # OBSERVED ORDINAL ELEMENTS
     sigma_obs_obs_inv_Zobs_row_func = lambda z_row_obs, sigma_obs_obs_inv=sigma_obs_obs_inv: np.dot(sigma_obs_obs_inv, z_row_obs)
-    Z_row, _, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
+    Z_row, var_ordinal, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
                                                  r_lower_row=r_lower_row, 
                                                  r_upper_row=r_upper_row, 
                                                  num_ord_updates=num_ord_updates,
@@ -264,7 +266,7 @@ def _fillup_latent_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_upda
     Z_imp_row = np.copy(Z_row)
     if any(missing_indices):
         Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs) 
-    return Z_imp_row, truncnorm_warn
+    return Z_imp_row, var_ordinal, truncnorm_warn
 
 def _sample_latent_body_(args):
     return _sample_latent_body(*args)

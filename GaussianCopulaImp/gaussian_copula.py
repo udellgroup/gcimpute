@@ -18,8 +18,10 @@ class GaussianCopula():
 
     Attributes
     ----------
-    cont_indices: ndarray of (n_features,)
-        Indication of continuous(True) or oridnal(False) variable decision. 
+    cont_indices: ndarray 
+        Set of continuous variable indices.
+    ord_indices: ndarray
+        Set of ordinal variable indices. The complement set of cont_indices.
     n_iter_: int
         Number of iteration rounds that occurred. Will be less than self._max_iter if early stopping criterion was reached.
     likelihood: list of length n_iter_
@@ -33,13 +35,17 @@ class GaussianCopula():
     Methods
     -------
     fit(X)
-        fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
+        Fit a Gaussian copula model on X.
+    transform(X)
+        Return the imputed X using the stored model.
     fit_transform(X)
-        At each sequentially observed data batch, fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
+        Fit a Gaussian copula model on X and return the transformed X.
+    sample_imputation(X)
+        Return multiple imputed datasets X using the stored model.
     get_params()
         Get parameters for this estimator.
     get_imputed_confidence_interval(alpha=0.95)
-        Get the confidence intervals for the imputed missing entries when all variables are continuous
+        Get the confidence intervals for the imputed missing entries.
     get_reliability(Ximp=None, alpha=0.95)
         Get the reliability, a relative quantity across all imputed entries, when either all variables are continuous or all variables are ordinal 
 
@@ -177,7 +183,7 @@ class GaussianCopula():
             Z = self._latent_Zimp
         else:
             Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X)
-            Z = self._fillup_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num_ord_updates=num_ord_updates)
+            Z, _ = self._fillup_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num_ord_updates=num_ord_updates)
         # from Z to X
         X_imp = self._latent_to_imp(Z=Z, X_to_impute=X)
         return X_imp
@@ -220,28 +226,30 @@ class GaussianCopula():
 
     def get_imputed_confidence_interval(self, X=None, alpha = 0.95, num_ord_updates=1):
         '''
-        Compute the confidence interval for each imputed entry, only applicable when all variables are continuous variables.
+        Compute the confidence interval for each imputed entry.
         '''
         if self._training_mode == 'minibatch-online':
             raise NotImplementedError('Confidence interval has not yet been supported for minibatch-online mode')
         if X is None:
             Zimp = self._latent_Zimp
+            Cord = self._latent_Cord
+            X = self.transform_function.X
         else:
             Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X)
-            Zimp = self._fillup_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num_ord_updates=num_ord_updates)
+            Zimp, Cord = self._fillup_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num_ord_updates=num_ord_updates)
             
         n, p = Zimp.shape
         margin = norm.ppf(1-(1-alpha)/2)
 
         # upper and lower have np.nan at oberved locations because std_cond has np.nan at those locations
-        std_cond = self._get_cond_std_missing()
+        std_cond = self._get_cond_std_missing(X=X, Cord=Cord)
         upper = Zimp + margin * std_cond
         lower = Zimp - margin * std_cond
 
         # monotonic transformation
-        upper = self.transform_function.impute_cont_observed(Z = upper)
-        lower = self.transform_function.impute_cont_observed(Z = lower)
-        obs_loc = ~np.isnan(self.transform_function.X)
+        upper = self._latent_to_imp(Z = upper, X_to_impute=X)
+        lower = self._latent_to_imp(Z = lower, X_to_impute=X)
+        obs_loc = ~np.isnan(X)
         upper[obs_loc] = np.nan
         lower[obs_loc] = np.nan
         return {'upper':upper, 'lower':lower}
@@ -283,34 +291,6 @@ class GaussianCopula():
         for i in range(num):
             X_imp_num[...,i] = self._latent_to_imp(Z=Z_imp_num[...,i], X_to_impute=X)
         return X_imp_num
-
-    def _sample_latent(self, Z, Z_ord_lower, Z_ord_upper, num, num_ord_updates=2):
-        '''
-        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
-        '''
-        n, p = Z.shape
-        max_workers = self._max_workers
-
-        if max_workers ==1:
-            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num, self._seed, num_ord_updates)
-            Z_imp_num = _sample_latent_body_(args)
-        else:
-            divide = n/max_workers * np.arange(max_workers+1)
-            divide = divide.astype(int)
-            args = [(
-                    np.copy(Z[divide[i]:divide[i+1],:]), 
-                    Z_ord_lower[divide[i]:divide[i+1],:], 
-                    Z_ord_upper[divide[i]:divide[i+1],:], 
-                    self._corr, 
-                    num, self._seed, num_ord_updates
-                    ) for i in range(max_workers)]
-            Z_imp_num = np.empty((n,p,num))
-            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
-                res = pool.map(_sample_latent_body_, args)
-                for i, Z_imp_divide in enumerate(res):
-                    Z_imp_num[divide[i]:divide[i+1],...] = Z_imp_divide
-        return Z_imp_num
-
 
 
     def fit_change_point_test(self, X, cont_indices=None, nsamples=100, verbose=False):
@@ -502,6 +482,32 @@ class GaussianCopula():
         self._set_n_iter(converged, i)
         return  Z_imp, C_ord
 
+    def _sample_latent(self, Z, Z_ord_lower, Z_ord_upper, num, num_ord_updates=2):
+        '''
+        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
+        '''
+        n, p = Z.shape
+        max_workers = self._max_workers
+
+        if max_workers ==1:
+            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num, self._seed, num_ord_updates)
+            Z_imp_num = _sample_latent_body_(args)
+        else:
+            divide = n/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [(
+                    np.copy(Z[divide[i]:divide[i+1],:]), 
+                    Z_ord_lower[divide[i]:divide[i+1],:], 
+                    Z_ord_upper[divide[i]:divide[i+1],:], 
+                    self._corr, 
+                    num, self._seed, num_ord_updates
+                    ) for i in range(max_workers)]
+            Z_imp_num = np.empty((n,p,num))
+            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
+                res = pool.map(_sample_latent_body_, args)
+                for i, Z_imp_divide in enumerate(res):
+                    Z_imp_num[divide[i]:divide[i+1],...] = Z_imp_divide
+        return Z_imp_num
 
     def _fillup_latent(self, Z, Z_ord_lower, Z_ord_upper, num_ord_updates=2):
         '''
@@ -670,21 +676,25 @@ class GaussianCopula():
         sigma = self._project_to_correlation(sigma)
         return sigma, Z_imp, Z, C_ord, loglik/n
 
-    def _get_cond_std_missing(self):
+    def _get_cond_std_missing(self, X=None, Cord=None):
         '''
         The conditional std of each missing location given other observation. 
         '''
-        try:
-            Cord = self._latent_Cord
-        except AttributeError:
-            print(f'Cannot compute conditional std of missing entries before model fitting and imputation')
-            raise 
+        if Cord is None:
+            try:
+                Cord = self._latent_Cord
+            except AttributeError:
+                print(f'The model has not been fitted yet. Either fit the model first or supply Cord')
+                raise 
 
-        std_cond = np.zeros_like(self.transform_function.X)
-        obs_loc = ~np.isnan(self.transform_function.X)
+        if X is None:
+            X = self.transform_function.X
+
+        std_cond = np.zeros_like(X)
+        obs_loc = ~np.isnan(X)
         std_cond[obs_loc] = np.nan
 
-        for i,x_row in enumerate(self.transform_function.X):
+        for i,x_row in enumerate(X):
             missing_indices = np.isnan(x_row)
             obs_indices = ~missing_indices
 
@@ -698,7 +708,7 @@ class GaussianCopula():
                 # use einsum for faster and fewer computation
                 _var = 1 - np.einsum('ij, ji -> i', sigma_obs_missing.T, sigma_obs_obs_inv_obs_missing)
                 # When there exists valid ordinal observation, we will have self._latent_Cord[i, obs_indices].sum() positive.
-                if self._latent_Cord[i, obs_indices].sum()>0:
+                if Cord[i, obs_indices].sum()>0:
                     _var += np.einsum('ij, j, ji -> i', sigma_obs_obs_inv_obs_missing.T, Cord[i, obs_indices], sigma_obs_obs_inv_obs_missing)
                 std_cond[i, missing_indices] = np.sqrt(_var)
         return std_cond
