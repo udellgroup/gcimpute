@@ -247,8 +247,8 @@ class GaussianCopula():
         lower = Zimp - margin * std_cond
 
         # monotonic transformation
-        upper = self._latent_to_imp(Z = upper, X_to_impute=X)
-        lower = self._latent_to_imp(Z = lower, X_to_impute=X)
+        upper = self._latent_to_imp(Z=upper, X_to_impute=X, reverse_order=False)
+        lower = self._latent_to_imp(Z=lower, X_to_impute=X, reverse_order=False)
         obs_loc = ~np.isnan(X)
         upper[obs_loc] = np.nan
         lower[obs_loc] = np.nan
@@ -372,7 +372,7 @@ class GaussianCopula():
             i+=1
         return X_imp
 
-    def _latent_to_imp(self, Z, X_to_impute=None):
+    def _latent_to_imp(self, Z, X_to_impute=None, reverse_order=True):
         '''
         Transform the complete latent matrix Z to the observed space, but only keep values at missing entries (to be imputed). 
         All values at observe entries will be replaced with original observation in X_to_impute.
@@ -384,8 +384,11 @@ class GaussianCopula():
         # Rearange the obtained results to go back to the original data ordering
         if X_to_impute is None:
             X_to_impute = self.transform_function.X
-        _order = self.back_to_original_order()
-        Z_imp_rearranged = Z[:,_order]
+        if reverse_order:
+            _order = self.back_to_original_order()
+            Z_imp_rearranged = Z[:,_order]
+        else:
+            Z_imp_rearranged = Z
         X_imp = X_to_impute.copy()
         if any(self._cont_indices):
             X_imp[:,self._cont_indices] = self.transform_function.impute_cont_observed(Z=Z_imp_rearranged, X_to_impute=X_to_impute)
