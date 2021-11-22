@@ -4,6 +4,7 @@ Examples/test*.ipynb
 Examples/*.py
 Examples/*.pdf
 Examples/*.pickle
+Examples/*.txt
 myvenv/
 GaussianCopulaImp/.DS_Store
 .DS_Store
