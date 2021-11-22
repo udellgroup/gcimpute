@@ -49,17 +49,14 @@ For both **minibatch offline training** and **minibatch online training**, the g
 ## Examples 
 ```python
 from GaussianCopulaImp.gaussian_copula import GaussianCopula
-from GaussianCopulaImp.helper_data_generation import generate_sigma, generate_mixed_from_gc
-from GaussianCopulaImp.helper_evaluation import get_smae, get_scaled_error
+from GaussianCopulaImp.helper_data import generate_mixed_from_gc
+from GaussianCopulaImp.helper_evaluation import get_smae
 from GaussianCopulaImp.helper_mask import mask_types
 import numpy as np
 seed = 101
 
-# generate 15-dim mixed data (5 exponential variables, 5 1-5 ordinal variables and 5 boolean variables) 
-copula_corr = generate_sigma(seed=seed, p=15)
-X = generate_mixed_from_gc(sigma=copula_corr, n=2000, seed=seed)
-
-# randomly 2 (out of 5) entries of each variable type in each row
+# generate and mask 15-dim mixed data (5 continuous variables, 5 ordinal variables (1-5) and 5 boolean variables) 
+X = generate_mixed_from_gc(n=2000, seed=seed)
 X_mask = mask_types(X, mask_num=2, seed=seed)
 print('The first row of the masked dataset: ')
 print(X_mask[0,:])
@@ -67,17 +64,12 @@ print(X_mask[0,:])
 # model fitting 
 model = GaussianCopula(verbose=1)
 X_imp = model.fit_transform(X=X_mask)
-copula_corr_est = model.get_params()['copula_corr']
 
 # Evaluation: compute the scaled-MAE (SMAE) for each data type (scaled by MAE of median imputation) 
 smae = get_smae(X_imp, X, X_mask)
-print(f'The SMAE across 5 exponential variables has: mean {smae[:5].mean():.3f} and std {smae[:5].std():.3f}')
-print(f'The SMAE across 5 1-5 oridnal variables has: mean {smae[5:10].mean():.3f} and std {smae[5:10].std():.3f}')
-print(f'The SMAE across 5 boolean variables has: mean {smae[10:].mean():.3f} and std {smae[10:].std():.3f}')
-# Evaluation: compute the scaled l2 error of the estiamted copula correlation matrix 
-# (scaled by the l2 norm of the true copula correlation) 
-cor_error = get_scaled_error(copula_corr_est, copula_corr)
-print(f'The scaled correlation error is: {cor_error:.3f}')
+print(f'The SMAE across continous variables: mean {smae[:5].mean():.3f} and std {smae[:5].std():.3f}')
+print(f'The SMAE across oridnal variables: mean {smae[5:10].mean():.3f} and std {smae[5:10].std():.3f}')
+print(f'The SMAE across boolean variables: mean {smae[10:].mean():.3f} and std {smae[10:].std():.3f}')
 ```
 
 More detailed examples are available under directory Examples.
