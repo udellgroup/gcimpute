@@ -128,7 +128,7 @@ def load_GSS(cols=None, to_array = False):
     data = pd.read_csv(stream, index_col=0)
     _cols = data.columns.tolist()
     if cols is None:
-        cols = ['AGE', 'DEGREE', 'RINCOME', 'CLASS_', 'SATJOB', 'WEEKSWRK', 'HAPPY', 'HEALTH', 'SOCBAR']
+        cols = ['AGE', 'DEGREE', 'RINCOME', 'CLASS_', 'SATJOB', 'WEEKSWRK', 'HAPPY', 'HEALTH']
     try:
         data = data[cols]
     except KeyError:

@@ -115,7 +115,7 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates):
             C[np.ix_(missing_indices, missing_indices)] += np.matmul(cov_missing_obs_ord, J_obs_missing[ord_in_obs])
 
     # log-likelihood at observed locations
-    negloglik = np.linalg.slogdet(sigma_obs_obs)[1] + np.inner(np.dot(sigma_obs_obs_inv, Z_obs), Z_obs)
+    negloglik = np.linalg.slogdet(sigma_obs_obs)[1] + np.inner(np.dot(sigma_obs_obs_inv, Z_obs), Z_obs) + p*np.log(2*np.pi)
     loglik = -negloglik/2.0 
     return C, Z_imp_row, Z_row, var_ordinal, loglik, truncnorm_warn
 
@@ -157,7 +157,7 @@ def _LRGC_em_row_step_body(Z, r_lower, r_upper, U, d, sigma, num_ord_updates):
 
 
 def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num_ord_updates=1):
-    rank = U.shape[1]
+    p, rank = U.shape
     missing_indices = np.isnan(Z_row)
     obs_indices = ~missing_indices
     
@@ -187,7 +187,8 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
     ssi = np.dot(AU * var_ordinal[obs_indices], AU.T) + np.outer(si, si.T)
 
     num_obs = obs_indices.sum()
-    negloglik = np.log(sigma) * (num_obs-rank) + np.linalg.slogdet(np.identity(rank) * sigma + np.power(d,2) * UU_obs)[1]
+    negloglik = p*np.log(2*np.pi)
+    negloglik += np.log(sigma) * (num_obs-rank) + np.linalg.slogdet(np.identity(rank) * sigma + np.power(d,2) * UU_obs)[1]
     negloglik += (np.sum(zi_obs**2) - np.dot(zi_obs.T, np.dot(Ui_obs, si)))/sigma
     loglik = -negloglik/2.0
 

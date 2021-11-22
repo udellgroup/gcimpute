@@ -1,5 +1,6 @@
 import numpy as np 
 from scipy.stats import random_correlation, norm, expon
+from scipy.linalg import svdvals
 
 def get_mae(x_imp, x_true, x_obs=None):
     """
@@ -119,7 +120,7 @@ def get_scaled_error(sigma_imp, sigma):
 def grassman_dist(A,B):
     U1, d1, _ = np.linalg.svd(A, full_matrices = False)
     U2, d2, _ = np.linalg.svd(B, full_matrices = False)
-    _, d,_ = np.linalg.svd(np.dot(U1.T, U2))
+    d = svdvals(np.dot(U1.T, U2))
     theta = np.arccos(d)
     return np.linalg.norm(theta), np.linalg.norm(d1-d2)
 

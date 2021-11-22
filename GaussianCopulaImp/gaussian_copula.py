@@ -51,7 +51,7 @@ class GaussianCopula():
 
     '''
 
-    def __init__(self, training_mode='standard', stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, batch_size=100, window_size=200, min_ord_ratio=0.1, tol=0.001, likelihood_min_increase=0.01, max_iter=50, num_pass=2, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, corr_diff_type=['F']):
+    def __init__(self, training_mode='standard', stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, batch_size=100, window_size=200, min_ord_ratio=0.1, tol=0.002, likelihood_min_increase=0, max_iter=50, num_pass=2, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, corr_diff_type=['F']):
         '''
         Parameters:
             training_mode: {'standard', 'minibatch-offline', 'minibatch-online'}, default='standard'
@@ -470,7 +470,7 @@ class GaussianCopula():
             # stop if the change in the correlation estimation is below the threshold
             corrudpate = self._get_scaled_diff(prev_corr, self._corr)
             if self._verbose>0:
-                print(f"Iteration {i+1}: copula correlation update ratio {corrudpate:.4f}, likelihood {iterloglik:.4f}")
+                print(f"Iteration {i+1}: copula parameter change {corrudpate:.4f}, likelihood {iterloglik:.4f}")
             
             # append new likelihood and determine if early stopping criterion is satisfied
             converged = self._update_loglikelihood(iterloglik)

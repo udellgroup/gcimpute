@@ -5,6 +5,7 @@ from scipy.stats import norm, truncnorm
 import numpy as np
 import warnings
 from concurrent.futures import ProcessPoolExecutor
+from .helper_evaluation import grassman_dist
 
 class LowRankGaussianCopula(GaussianCopula):
     '''
@@ -38,7 +39,7 @@ class LowRankGaussianCopula(GaussianCopula):
     get_reliability(Ximp=None, alpha=0.95)
         Get the reliability, a relative quantity across all imputed entries, when either all variables are continuous or all variables are ordinal 
     '''
-    def __init__(self, rank, min_ord_ratio=0.1, tol=0.001, likelihood_min_increase=0.01, max_iter=50, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1):
+    def __init__(self, rank, min_ord_ratio=0.1, tol=0.03, likelihood_min_increase=0, max_iter=50, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1):
         '''
         Parameters:
             rank: int
@@ -63,7 +64,7 @@ class LowRankGaussianCopula(GaussianCopula):
                 We do not recommend using value larger than 1 (the default value) at this moment. It will slow the speed without clear 
                 performance improvement.
         '''
-        super().__init__(training_mode='standard', min_ord_ratio=min_ord_ratio, tol=tol, max_iter=max_iter, random_state=random_state, n_jobs=n_jobs, verbose=verbose, num_ord_updates=num_ord_updates)
+        super().__init__(training_mode='standard', min_ord_ratio=min_ord_ratio, tol=tol, likelihood_min_increase=likelihood_min_increase, max_iter=max_iter, random_state=random_state, n_jobs=n_jobs, verbose=verbose, num_ord_updates=num_ord_updates)
         self._rank = rank
         self._W = None
         self._sigma = None
@@ -139,7 +140,7 @@ class LowRankGaussianCopula(GaussianCopula):
         sigma = np.mean(d[self._rank:])
         W = u[:,:self._rank] * (np.sqrt(d[:self._rank] - sigma))
         self._W, self._sigma = self._scale_corr(W, sigma)
-        if self._verbose>0:
+        if self._verbose>1:
             print(f'Ater initialization, W has shape {self._W.shape} and sigma is {self._sigma:.4f}')
 
         converged = False
@@ -151,9 +152,10 @@ class LowRankGaussianCopula(GaussianCopula):
             self._W, self._sigma = W_new, sigma_new
 
             # stop if the change in the parameter estimation is below the threshold
-            wupdate = self._get_scaled_diff(prev_W, self._W)
+            # wupdate = self._get_scaled_diff(prev_W, self._W)
+            wupdate = grassman_dist(prev_W, self._W)[0]
             if self._verbose>0:
-                print(f'Interation {i+1}: noise ratio estimate {self._sigma:.4f}, copula parameter update ratio {wupdate:.4f}, likelihood {iterloglik:.4f}')
+                print(f'Interation {i+1}: noise ratio estimate {self._sigma:.4f}, copula parameter change {wupdate:.4f}, likelihood {iterloglik:.4f}')
 
             # append new likelihood and determine if early stopping criterion is satisfied
             converged = self._update_loglikelihood(iterloglik)
@@ -345,6 +347,7 @@ class LowRankGaussianCopula(GaussianCopula):
         X_imp = np.empty(X.shape)
         X_imp = self.transform_function.impute_cont_observed(Z_imp)
         return X_imp
+
 
 
 
