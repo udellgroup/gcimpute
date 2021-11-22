@@ -15,13 +15,13 @@ class TransformFunction():
         if poisson_cdf is not None:
             try:
                self.cdf_type[poisson_cdf] = 'Poisson'
-           except IndexError:
+            except IndexError:
                 print('Invalid poisson_cdf list value')
                 raise
         if poisson_inverse_cdf is not None:
             try:
                self.inverse_cdf_type[poisson_inverse_cdf] = 'Poisson'
-           except IndexError:
+            except IndexError:
                 print('Invalid poisson_inverse_cdf list value')
                 raise
 
@@ -86,7 +86,7 @@ class TransformFunction():
         return X_imp
 
     def impute_ord_observed(self, Z, X_to_impute=None):
-         """
+        """
         Return the observed variables corresponding to the ordinal columns in Z,
         but only at the non-nan entries of X_to_impute.
         To return a complete matrix, input an all nan X_to_impute.
