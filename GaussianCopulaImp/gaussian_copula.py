@@ -156,7 +156,7 @@ class GaussianCopula():
         self.corr_diff = defaultdict(list)
 
 
-    def fit(self, X, cont_indices = None):
+    def fit(self, X, cont_indices = None, poisson_cdf_indices = None, poisson_inverse_cdf_indices = None):
         '''
         Fits the Gaussian copula imputer on the input data X.
 
@@ -171,7 +171,8 @@ class GaussianCopula():
             print('fit method is not implemented for minibatch-online mode, since the fitting and imputation are done in the unit of mini-batch. To impute the missing entries, call fit_transform.')
             raise
         else:
-            return self.fit_offline(X)
+            return self.fit_offline(X, cont_indices = cont_indices, 
+                poisson_cdf_indices = poisson_cdf_indices, poisson_inverse_cdf_indices = poisson_inverse_cdf_indices)
 
     def transform(self, X=None, num_ord_updates=2):
         '''
@@ -188,7 +189,7 @@ class GaussianCopula():
         X_imp = self._latent_to_imp(Z=Z, X_to_impute=X)
         return X_imp
 
-    def fit_transform(self, X, cont_indices = None):
+    def fit_transform(self, X, cont_indices = None, poisson_cdf_indices = None, poisson_inverse_cdf_indices = None):
         '''
         Fit to data, then transform it. 
         For 'minibatch-online' mode, the variable types are set in this function call since the fit and transformation are done in an alternative fashion.
@@ -206,9 +207,16 @@ class GaussianCopula():
         '''
         if self._training_mode == 'minibatch-online':
             X = self._preprocess_data(X, cont_indices)
-            return self.fit_transform_online(X)
+            return self.fit_transform_online(X,
+                                             poisson_cdf_indices = poisson_cdf_indices, 
+                                             poisson_inverse_cdf_indices = poisson_inverse_cdf_indices
+                                            )
         else:
-            return self.fit_transform_offline(X, cont_indices)
+            return self.fit_transform_offline(X, 
+                                              cont_indices = cont_indices, 
+                                              poisson_cdf_indices = poisson_cdf_indices, 
+                                              poisson_inverse_cdf_indices = poisson_inverse_cdf_indices
+                                             )
 
     def get_params(self):
         '''
@@ -323,22 +331,29 @@ class GaussianCopula():
         out = {'pval':pvals, 'statistics':test_stats}
         return out
 
-    def fit_transform_offline(self, X, cont_indices):
+    def fit_transform_offline(self, X, cont_indices, poisson_cdf_indices = None, poisson_inverse_cdf_indices = None):
         '''
         Implement fit_transform when the training mode is 'standard' or 'minibatch-offline'
         '''
-        self.fit_offline(X, cont_indices)
+        self.fit_offline(X, cont_indices=cont_indices, 
+                         poisson_cdf_indices=poisson_cdf_indices,
+                         poisson_inverse_cdf_indices=poisson_inverse_cdf_indices
+                        )
         X_imp = self.transform()
         return X_imp
 
-    def fit_offline(self, X, cont_indices):
+    def fit_offline(self, X, cont_indices, poisson_cdf_indices = None, poisson_inverse_cdf_indices = None):
         '''
         Implement fit when the training mode is 'standard' or 'minibatch-offline'
         '''
         X = self._preprocess_data(X, cont_indices)
         # do marginal estimation
         # for every fit, a brand new marginal transformation is used 
-        self.transform_function = TransformFunction(X, self._cont_indices, self._ord_indices)
+        self.transform_function = TransformFunction(X, 
+                                                    cont_indices=self._cont_indices, ord_indices=self._ord_indices,
+                                                    poisson_cdf = poisson_cdf_indices, 
+                                                    poisson_inverse_cdf = poisson_inverse_cdf_indices
+                                                   )
 
         Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent()
         # estimate copula correlation matrix
@@ -348,12 +363,16 @@ class GaussianCopula():
         self._latent_Zimp = Z_imp
         self._latent_Cord = C_ord
 
-    def fit_transform_online(self, X):
+    def fit_transform_online(self, X, poisson_cdf_indices = None, poisson_inverse_cdf_indices = None):
         '''
         Implement fit_transform when the training mode is 'minibatch-online'
         '''
         X = np.array(X)
-        self.transform_function = OnlineTransformFunction(self._cont_indices, self._ord_indices, window_size=self._window_size)
+        self.transform_function = OnlineTransformFunction(self._cont_indices, self._ord_indices, 
+                                                          window_size=self._window_size, 
+                                                          poisson_cdf = poisson_cdf_indices, 
+                                                          poisson_inverse_cdf_indices = poisson_inverse_cdf_indices
+                                                         )
         n,p = X.shape
         X_imp = np.zeros_like(X)
         self._corr = np.identity(p)

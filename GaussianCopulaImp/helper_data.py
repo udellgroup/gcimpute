@@ -89,7 +89,11 @@ def generate_LRGC(var_types, rank, sigma, n=500, ord_num=5, cont_transform=lambd
     return X_true, W
 
 
-def generate_mixed_from_gc(sigma=None, n=2000, seed=1, var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}, cutoff_by='quantile', random_generator=None):
+def generate_mixed_from_gc(sigma=None, n=2000, seed=1, 
+                           var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}, 
+                           cont_transform = lambda x: expon.ppf(norm.cdf(x), scale=3),
+                           ord_transform = None,
+                           cutoff_by='quantile', random_generator=None):
     '''
     sigma: either a single correlation matrix or a list of correlation matrices
     '''
@@ -102,9 +106,9 @@ def generate_mixed_from_gc(sigma=None, n=2000, seed=1, var_types = {'cont':list(
         sigma = generate_sigma(p = sum([len(x) for x in var_types.values()]), random_generator=rng)
     if not isinstance(sigma, list):
         sigma = [sigma]
-    cont_index = var_types['cont']
-    ord_index = var_types['ord']
-    bin_index = var_types['bin']
+    cont_index = var_types['cont'] if 'cont' in var_types else []
+    ord_index = var_types['ord'] if 'ord' in var_types else []
+    bin_index = var_types['bin'] if 'bin' in var_types else []
     all_index = cont_index + ord_index + bin_index
     p = len(all_index)
     if min(all_index)!=0 or max(all_index) != (p-1) or len(set(all_index)) != p:
@@ -113,9 +117,15 @@ def generate_mixed_from_gc(sigma=None, n=2000, seed=1, var_types = {'cont':list(
         raise ValueError('Inconcistent dimension between variable lengths and copula correlation')
     X = np.concatenate([rng.multivariate_normal(np.zeros(p), s, size=n) for s in sigma], axis=0)
     # marginal transformation
-    X[:,cont_index] = expon.ppf(norm.cdf(X[:,cont_index]), scale = 3)
-    for ind in ord_index:
-        X[:,ind] = cont_to_ord(X[:,ind], k=5, by=cutoff_by, random_generator=rng)
+    # continuous
+    X[:,cont_index] = cont_transform(X[:,cont_index])
+    # ordinal
+    if ord_transform is None:
+        for ind in ord_index:
+            X[:,ind] = cont_to_ord(X[:,ind], k=5, by=cutoff_by, random_generator=rng)
+    else:
+        X[:, ord_index] = ord_transform(X[:, ord_index])
+    # binary
     for ind in bin_index:
         X[:,ind] = cont_to_ord(X[:,ind], k=2, by=cutoff_by, random_generator=rng)
     return X
