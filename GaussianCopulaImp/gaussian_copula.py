@@ -130,7 +130,8 @@ class GaussianCopula():
         self._window_size = window_size
         self._corr_diff_type = corr_diff_type
 
-        # TODO: unify the use of integer indexing and boolean indexing so that we only need one pair of the following
+        # self._cont_indices and self._ord_indices store boolean indexing
+        # self.cont_indices and self.ord_indices store integer indexing
         self._cont_indices = None
         self._ord_indices = None 
         self.cont_indices = None
@@ -225,11 +226,7 @@ class GaussianCopula():
         Returns:
             params: dict
         '''
-        # During the fitting process, all ordinal columns are moved to appear before all continuous columns
-        # Rearange the obtained results to go back to the original data ordering
-        _order = self.back_to_original_order()
-        corr_rearranged = self._corr[np.ix_(_order, _order)]
-        params = {'copula_corr': corr_rearranged}
+        params = {'copula_corr': self._corr.copy()}
         return params
 
     def get_imputed_confidence_interval(self, X=None, alpha = 0.95, num_ord_updates=1):
@@ -255,8 +252,8 @@ class GaussianCopula():
         lower = Zimp - margin * std_cond
 
         # monotonic transformation
-        upper = self._latent_to_imp(Z=upper, X_to_impute=X, reverse_order=False)
-        lower = self._latent_to_imp(Z=lower, X_to_impute=X, reverse_order=False)
+        upper = self._latent_to_imp(Z=upper, X_to_impute=X)
+        lower = self._latent_to_imp(Z=lower, X_to_impute=X)
         obs_loc = ~np.isnan(X)
         upper[obs_loc] = np.nan
         lower[obs_loc] = np.nan
@@ -371,7 +368,7 @@ class GaussianCopula():
         self.transform_function = OnlineTransformFunction(self._cont_indices, self._ord_indices, 
                                                           window_size=self._window_size, 
                                                           poisson_cdf = poisson_cdf_indices, 
-                                                          poisson_inverse_cdf_indices = poisson_inverse_cdf_indices
+                                                          poisson_inverse_cdf = poisson_inverse_cdf_indices
                                                          )
         n,p = X.shape
         X_imp = np.zeros_like(X)
@@ -391,7 +388,7 @@ class GaussianCopula():
             i+=1
         return X_imp
 
-    def _latent_to_imp(self, Z, X_to_impute=None, reverse_order=True):
+    def _latent_to_imp(self, Z, X_to_impute=None):
         '''
         Transform the complete latent matrix Z to the observed space, but only keep values at missing entries (to be imputed). 
         All values at observe entries will be replaced with original observation in X_to_impute.
@@ -403,16 +400,11 @@ class GaussianCopula():
         # Rearange the obtained results to go back to the original data ordering
         if X_to_impute is None:
             X_to_impute = self.transform_function.X
-        if reverse_order:
-            _order = self.back_to_original_order()
-            Z_imp_rearranged = Z[:,_order]
-        else:
-            Z_imp_rearranged = Z
         X_imp = X_to_impute.copy()
         if any(self._cont_indices):
-            X_imp[:,self._cont_indices] = self.transform_function.impute_cont_observed(Z=Z_imp_rearranged, X_to_impute=X_to_impute)
+            X_imp[:,self._cont_indices] = self.transform_function.impute_cont_observed(Z=Z, X_to_impute=X_to_impute)
         if any(self._ord_indices):
-            X_imp[:,self._ord_indices] = self.transform_function.impute_ord_observed(Z=Z_imp_rearranged, X_to_impute=X_to_impute)
+            X_imp[:,self._ord_indices] = self.transform_function.impute_ord_observed(Z=Z, X_to_impute=X_to_impute)
         return X_imp
 
     def _observed_to_latent(self, X_to_transform=None):
@@ -421,7 +413,10 @@ class GaussianCopula():
         Z_cont = self.transform_function.get_cont_latent(X_to_transform=X_to_transform)
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_to_transform)
         Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
-        Z = np.concatenate((Z_ord, Z_cont), axis=1)
+        # Z = np.concatenate((Z_ord, Z_cont), axis=1)
+        Z = np.empty_like(X_to_transform)
+        Z[:, self.cont_indices] = Z_cont
+        Z[:, self.ord_indices] = Z_ord
         return Z, Z_ord_lower, Z_ord_upper
 
     def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper):
@@ -512,17 +507,18 @@ class GaussianCopula():
         max_workers = self._max_workers
 
         if max_workers ==1:
-            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num, self._seed, num_ord_updates)
+            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num, self._seed, num_ord_updates, self._ord_indices)
             Z_imp_num = _sample_latent_body_(args)
         else:
             divide = n/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
             args = [(
-                    np.copy(Z[divide[i]:divide[i+1],:]), 
-                    Z_ord_lower[divide[i]:divide[i+1],:], 
-                    Z_ord_upper[divide[i]:divide[i+1],:], 
+                    Z[divide[i]:divide[i+1]].copy(), 
+                    Z_ord_lower[divide[i]:divide[i+1]], 
+                    Z_ord_upper[divide[i]:divide[i+1]], 
                     self._corr, 
-                    num, self._seed, num_ord_updates
+                    num, self._seed, num_ord_updates,
+                    self._ord_indices
                     ) for i in range(max_workers)]
             Z_imp_num = np.empty((n,p,num))
             with ProcessPoolExecutor(max_workers=max_workers) as pool: 
@@ -539,23 +535,27 @@ class GaussianCopula():
         max_workers = self._max_workers
 
         if max_workers ==1:
-            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates)
-            Z_imp = _fillup_latent_body_(args)
+            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates,self._ord_indices)
+            Z_imp, C_ord = _fillup_latent_body_(args)
         else:
             divide = n/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
             args = [(
-                    np.copy(Z[divide[i]:divide[i+1],:]), 
-                    Z_ord_lower[divide[i]:divide[i+1],:], 
-                    Z_ord_upper[divide[i]:divide[i+1],:], 
-                    self._corr, num_ord_updates
+                    Z[divide[i]:divide[i+1]].copy(), 
+                    Z_ord_lower[divide[i]:divide[i+1]], 
+                    Z_ord_upper[divide[i]:divide[i+1]], 
+                    self._corr, 
+                    num_ord_updates,
+                    self._ord_indices
                     ) for i in range(max_workers)]
             Z_imp = np.empty((n,p))
+            C_ord = np.empty((n,p))
             with ProcessPoolExecutor(max_workers=max_workers) as pool: 
                 res = pool.map(_fillup_latent_body_, args)
-                for i, Z_imp_divide in enumerate(res):
-                    Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
-        return Z_imp
+                for i, (Z_imp_divide, C_ord_divide) in enumerate(res):
+                    Z_imp[divide[i]:divide[i+1]] = Z_imp_divide
+                    C_ord[divide[i]:divide[i+1]] = C_ord_divide
+        return Z_imp, C_ord
 
     def partial_fit_transform(self, X_batch, step_size=0.5, marginal_update=True):
         """
@@ -587,7 +587,9 @@ class GaussianCopula():
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_batch)
         Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
         Z_cont = self.transform_function.get_cont_latent(X_to_transform=X_batch) 
-        Z = np.concatenate((Z_ord, Z_cont), axis=1)
+        Z = np.empty_like(X_batch)
+        Z[:, self._cont_indices] = Z_cont
+        Z[:, self._ord_indices] = Z_ord
         corr, Z_imp, Z, C_ord, loglik = self._em_step(Z, Z_ord_lower, Z_ord_upper)
 
         new_corr = corr*step_size + (1-step_size)*self._corr
@@ -604,13 +606,12 @@ class GaussianCopula():
         return new_corr
 
     def partial_transform(self, X_batch):
-        _order = self.back_to_original_order()
-        Z_imp_rearranged = self._latent_Zimp[:,_order]
-        X_imp = np.empty(Z_imp_rearranged.shape)
+        Z_imp = self._latent_Zimp
+        X_imp = np.empty_like(Z_imp)
         if any(self._cont_indices):
-            X_imp[:,self._cont_indices] = self.transform_function.impute_cont_observed(Z=Z_imp_rearranged, X_to_impute=X_batch)
+            X_imp[:,self._cont_indices] = self.transform_function.impute_cont_observed(Z=Z_imp, X_to_impute=X_batch)
         if any(self._ord_indices):
-            X_imp[:,self._ord_indices] = self.transform_function.impute_ord_observed(Z=Z_imp_rearranged, X_to_impute=X_batch)
+            X_imp[:,self._ord_indices] = self.transform_function.impute_ord_observed(Z=Z_imp, X_to_impute=X_batch)
         return X_imp
 
 
@@ -669,7 +670,7 @@ class GaussianCopula():
         num_ord_updates = self._num_ord_updates
 
         if max_workers ==1:
-            args = (Z, r_lower, r_upper, self._corr, num_ord_updates)
+            args = (Z, r_lower, r_upper, self._corr, num_ord_updates, self._ord_indices)
             C, Z_imp, Z, C_ord, loglik = _em_step_body_(args)
             C = C/n
         else:
@@ -679,7 +680,8 @@ class GaussianCopula():
                     np.copy(Z[divide[i]:divide[i+1],:]), 
                     r_lower[divide[i]:divide[i+1],:], 
                     r_upper[divide[i]:divide[i+1],:], 
-                    self._corr, num_ord_updates
+                    self._corr, num_ord_updates,
+                    self._ord_indices
                     ) for i in range(max_workers)]
             Z_imp = np.empty((n,p))
             C = np.zeros((p,p))

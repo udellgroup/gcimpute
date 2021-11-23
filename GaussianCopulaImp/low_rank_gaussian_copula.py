@@ -76,10 +76,7 @@ class LowRankGaussianCopula(GaussianCopula):
         Returns:
             params: dict
         '''
-        # During the fitting process, all ordinal columns are moved to appear before all continuous columns
-        # Rearange the obtained results to go back to the original data ordering
-        _order = self.back_to_original_order()
-        params = {'copula_factor_loading': self._W[_order], 'copula_noise_ratio':self._sigma}
+        params = {'copula_factor_loading': self._W, 'copula_noise_ratio':self._sigma}
         return params
 
 
@@ -129,10 +126,11 @@ class LowRankGaussianCopula(GaussianCopula):
         Z_imp = self._init_impute_svd(Z_imp, self._rank, Z_ord_lower, Z_ord_upper)
         # Form latent variable matrix
         # Update entries at obseved ordinal locations from SVD initialization
-        if any(self.ord_indices):
-            obs_ord = ~np.isnan(Z_ord_lower)
-            num_ord = sum(self.ord_indices)
-            Z[:,:num_ord][obs_ord] = Z_imp[:,:num_ord][obs_ord].copy()
+        if any(self._ord_indices):
+            Z_ord = Z[:, self._ord_indices].copy()
+            obs_ord = ~np.isnan(Z_ord)
+            Z_ord[obs_ord] = Z_imp[:,self._ord_indices][obs_ord].copy()
+            Z[:, self._ord_indices] = Z_ord
 
         # initialize the parameter estimate 
         corr = np.corrcoef(Z_imp, rowvar=False)
@@ -230,7 +228,7 @@ class LowRankGaussianCopula(GaussianCopula):
         U,d,V = np.linalg.svd(W, full_matrices=False)
 
         if max_workers == 1:
-            args = (Z, r_lower, r_upper, U, d, sigma, num_ord_updates)
+            args = (Z, r_lower, r_upper, U, d, sigma, num_ord_updates, self._ord_indices)
             Z, A, S, SS, C_ord, loglik, s_row = _LRGC_em_row_step_body_(args)
             args = (Z, C_ord, U, sigma, A, S, SS)
             W_new, s_col = _LRGC_em_col_step_body_(args)
@@ -239,10 +237,11 @@ class LowRankGaussianCopula(GaussianCopula):
             divide = n/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
             args = [(
-                    Z[divide[i]:divide[i+1],:].copy(), 
-                    r_lower[divide[i]:divide[i+1],:], 
-                    r_upper[divide[i]:divide[i+1],:], 
-                    U, d, sigma, num_ord_updates
+                    Z[divide[i]:divide[i+1]].copy(), 
+                    r_lower[divide[i]:divide[i+1]], 
+                    r_upper[divide[i]:divide[i+1]], 
+                    U, d, sigma, num_ord_updates,
+                    self._ord_indices
                     ) for i in range(max_workers)]
             A = np.zeros((n,rank,rank))
             S = np.zeros((n,rank))
@@ -287,8 +286,9 @@ class LowRankGaussianCopula(GaussianCopula):
 
 
     def _init_impute_svd(self, Z, rank, Z_ord_lower, Z_ord_upper):
-        # first zero initialization on missing entries to obtain SVD
-        # then SVD initialization replace zero initialization
+        '''
+        Return an imputed Z using SVD on the zero-imputed Z
+        '''
         Z_imp = np.copy(Z)
         Z_imp[np.isnan(Z_imp)] = 0.0
 
@@ -300,16 +300,20 @@ class LowRankGaussianCopula(GaussianCopula):
 
         k,p = Z_ord_lower.shape[1], Z.shape[1]
 
-        for j in range(k):
-            # index is a subset of observed indices
-            # pay attension to missing values
-            index_o = np.nonzero(~np.isnan(Z[:,j]))[0]
-            index = (Z_imp[index_o,j] > Z_ord_upper[index_o,j]) | (Z_imp[index_o,j] < Z_ord_lower[index_o,j])
-            Z_imp[index_o[index],j] = Z[index_o[index],j]
-
-        for j in range(k,p,1):
-            index_o = ~np.isnan(Z[:,j])
-            Z_imp[index_o,j] = Z[index_o,j]
+        j_in_ord = 0
+        for j, (_cont, _ord) in enumerate(zip(self._cont_indices, self._ord_indices)):
+            if _cont and _ord:
+                raise 'Some variable is specified as both continuous and ordinal'
+            if not _cont and not _ord:
+                raise 'Some variable is specified as neither continuous nor ordinal'
+            if _cont:
+                index_o = ~np.isnan(Z[:,j])
+                Z_imp[index_o,j] = Z[index_o,j]
+            if _ord:
+                index_o = np.flatnonzero(~np.isnan(Z[:,j]))
+                index = (Z_imp[index_o,j] > Z_ord_upper[index_o,j_in_ord]) | (Z_imp[index_o,j] < Z_ord_lower[index_o,j_in_ord])
+                Z_imp[index_o[index],j] = Z[index_o[index],j]
+                j_in_ord += 1
 
         return Z_imp
 

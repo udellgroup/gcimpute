@@ -5,6 +5,7 @@ Examples/*.py
 Examples/*.pdf
 Examples/*.pickle
 Examples/*.txt
+Examples/*.sh
 myvenv/
 GaussianCopulaImp/.DS_Store
 .DS_Store
