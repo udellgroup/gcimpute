@@ -1,8 +1,11 @@
 import numpy as np
 from statsmodels.distributions.empirical_distribution import ECDF
 from scipy.stats import norm, poisson
+from functools import partial
+from .marginal_imputation import *
+
 class TransformFunction():
-    def __init__(self, X, cont_indices, ord_indices, poisson_cdf = None, poisson_inverse_cdf = None):
+    def __init__(self, X, cont_indices, ord_indices, cdf_types, inverse_cdf_types):
         '''
         This class performs transformation between the observed space and the latent space.
         '''
@@ -10,21 +13,8 @@ class TransformFunction():
         self.ord_indices = ord_indices
         self.cont_indices = cont_indices
         p = self.X.shape[1]
-        self.cdf_type = np.array(['empirical'] * p)
-        self.inverse_cdf_type = np.array(['empirical'] * p)
-        if poisson_cdf is not None:
-            try:
-               self.cdf_type[poisson_cdf] = 'Poisson'
-            except IndexError:
-                print('Invalid poisson_cdf list value')
-                raise
-        if poisson_inverse_cdf is not None:
-            try:
-               self.inverse_cdf_type[poisson_inverse_cdf] = 'Poisson'
-            except IndexError:
-                print('Invalid poisson_inverse_cdf list value')
-                raise
-
+        self.cdf_type = cdf_types
+        self.inverse_cdf_type = inverse_cdf_types
 
     def get_cont_latent(self, X_to_transform=None):
         """
@@ -176,7 +166,7 @@ class TransformFunction():
         if cdf_type == 'empirical':
             func = ECDF(x_obs)
         else:
-            raise NotImplemented("Only 'empirical' and 'Poisson' are allowed for marginal CDF estimation")
+            raise NotImplemented("Only 'empirical' and 'poisson' are allowed for marginal CDF estimation")
         def marginal(x):
             # from obs to scores
             q = func(x)
@@ -196,13 +186,15 @@ class TransformFunction():
         if cdf_type == 'empirical':
             func = ECDF(x_obs)
             threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
-        elif cdf_type == 'Poisson':
+        elif cdf_type == 'poisson':
             func = lambda x, mu=x_obs.mean(): poisson.cdf(x, mu = mu)
             # for count data, the corresponding latent interval will be shorter than ordinal treatment
             # refelecting stronger regularization due to parametric model
             threshold = 0.5
-        else:
-            raise NotImplemented("Only 'empirical' and 'Poisson' are allowed for marginal CDF estimation")
+        elif cdf_type not in ['truncated_lower','truncated_upper','truncated_twoside']:
+            print(f"Invalid ordinal marginal estimation argument: {cdf_type}")
+            raise NotImplementedError
+
         def marginal(x):
             if len(unique)>1:
                 # from obs to scores
@@ -213,7 +205,17 @@ class TransformFunction():
                 lower = np.ones_like(x) - np.inf
                 upper = np.ones_like(x) + np.inf
             return lower, upper
-        return marginal
+
+        if cdf_type in ['empirical','poisson']:
+            f_marginal = marginal
+        elif cdf_type == 'truncated_lower':
+            f_marginal = partial(truncated_marginal_lower, x_obs = x_obs)
+        elif cdf_type == 'truncated_upper':
+            f_marginal = partial(truncated_marginal_upper, x_obs = x_obs)
+        elif cdf_type == 'truncated_twoside':
+            f_marginal = partial(truncated_marginal_twoside, x_obs = x_obs)
+
+        return f_marginal
 
     def _inverse_marginal_cont_est(self, x_obs, inverse_cdf_type='empirical'):
         '''
@@ -245,11 +247,17 @@ class TransformFunction():
         assert l>0, 'Each variable must have at least one observation'
 
         if inverse_cdf_type == 'empirical':
-            func = lambda q, x_obs=x_obs: self.inverse_ecdf(data=x_obs, x=q)
-        elif inverse_cdf_type == 'Poisson':
+            func = partial(inverse_ecdf, x_obs=x_obs)
+        elif inverse_cdf_type == 'poisson':
             func = lambda q, mu=x_obs.mean(): poisson.ppf(q, mu=mu)
+        elif inverse_cdf_type == 'truncated_lower':
+            func = partial(truncated_inverse_marginal_lower, x_obs=x_obs)
+        elif inverse_cdf_type == 'truncated_upper':
+            func = partial(truncated_inverse_marginal_upper, x_obs=x_obs)
+        elif inverse_cdf_type == 'truncated_twoside':
+            func = partial(truncated_inverse_marginal_twoside, x_obs=x_obs)
         else:
-            raise NotImplemented("Only 'empirical' and 'Poisson' are allowed for marginal inverse CDF estimation")
+            raise NotImplemented("Invalid ordinal inverse marginal estimation argument")
 
         def inverse_marginal(z):
             q = norm.cdf(z)
@@ -258,17 +266,6 @@ class TransformFunction():
 
         return inverse_marginal
 
-    def inverse_ecdf(self, data, x, DECIMAL_PRECISION = 3):
-        """
-        computes the inverse ecdf (quantile) for x with ecdf given by data
-        """
-        n = len(data)
-        if n==0:
-            print('No observation can be used for imputation')
-            raise
-        # round to avoid numerical errors in ceiling function
-        quantile_indices = np.ceil(np.round_((n + 1) * x - 1, DECIMAL_PRECISION))
-        quantile_indices = np.clip(quantile_indices, a_min=0,a_max=n-1).astype(int)
-        sort = np.sort(data)
-        return sort[quantile_indices]
+    
+
 

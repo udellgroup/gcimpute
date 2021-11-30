@@ -5,7 +5,7 @@ from .transform_function import TransformFunction
 
 
 class OnlineTransformFunction(TransformFunction):
-    def __init__(self, cont_indices, ord_indices, window_size=100, poisson_cdf = None, poisson_inverse_cdf = None):
+    def __init__(self, cont_indices, ord_indices, window_size=100, **kwargs):
         """
         Require window_size to be positive integers.
 
@@ -17,11 +17,9 @@ class OnlineTransformFunction(TransformFunction):
         p = len(cont_indices)
         window_init = np.ones((window_size, p), dtype=np.float64) * np.nan
         # window is stored in self.X
-        super().__init__(X=window_init, cont_indices=cont_indices, ord_indices=ord_indices, 
-            poisson_cdf=poisson_cdf, poisson_inverse_cdf=poisson_inverse_cdf)
+        super().__init__(X=window_init, cont_indices=cont_indices, ord_indices=ord_indices, **kwargs)
         self.window_size = window_size
         self.update_pos = np.zeros(p, dtype=np.int64)
-
 
     def init_window(self, X_batch):
         """
