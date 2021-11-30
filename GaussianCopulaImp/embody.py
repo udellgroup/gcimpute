@@ -1,60 +1,109 @@
 import numpy as np
 from scipy.stats import norm, truncnorm
 
-def _em_step_body_(args):
+def _latent_operation_body_(args):
     """
-    Does a step of the EM algorithm, needed to dereference args to support parallelism
+    Dereference args to support parallelism
     """
-    return _em_step_body(*args)
+    if isinstance(args[-1], dict):
+        return  _latent_operation_body(*args[:-1], **args[-1])
+    else:
+        return _latent_operation_body(*args)
 
-def _em_step_body(Z, r_lower, r_upper, sigma, num_ord_updates, ord_indices):
-    """
-    Iterate the rows over provided matrix 
-    """
-    n, p = Z.shape
-    Z_imp = np.copy(Z)
-    C = np.zeros((p,p))
-    C_ord = np.zeros((n,p))
-    trunc_warn = False
-    loglik = 0
-    for i in range(n):
-        c, z_imp, z, c_ordinal, _loglik, warn = _em_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates, ord_indices)
-        Z_imp[i,:] = z_imp
-        Z[i,:] = z
-        C_ord[i,:] = c_ordinal
-        C += c
-        loglik += _loglik
-        trunc_warn = trunc_warn or warn
-    # TO DO: no need to return Z, just edit it during the process
-    if trunc_warn:
-        print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
-    return C, Z_imp, Z, C_ord, loglik
-
-def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates, ord_indices):
-    """
-    The body of the em algorithm for each row
-    Returns a new latent row, latent imputed row and C matrix, which, when added
-    to the empirical covariance gives the expected covariance
-
+def _latent_operation_body(task, Z, r_lower, r_upper, sigma, num_ord_updates, ord_indices, **kwargs):
+    '''
     Args:
-        Z_row (array): (potentially missing) latent entries for one data point
-        r_lower_row (array): (potentially missing) lower range of ordinal entries for one data point
-        r_upper_row (array): (potentially missing) upper range of ordinal entries for one data point
-        sigma (matrix): estimate of covariance
-        num_ord (int): the number of ordinal columns
-
+        task: str in ['em', 'fillup', 'sample']
     Returns:
-        C (matrix): results in the updated covariance when added to the empircal covariance
-        Z_imp_row (array): Z_row with latent ordinals updated and missing entries imputed 
-        Z_row (array): input Z_row with latent ordinals updated
-    """
+        out_dict:
+            If task == 'em', 
+                out_dict has keys ['Z', 'var_ordinal', 'Z_imp', 'loglik', 'C'].
+            If task == 'fillup',
+                out_dict has keys ['var_ordinal', 'Z_imp'].
+            If task == 'sample',
+                out_dict has keys ['Z_imp_sample']
+    '''
+    n, p = Z.shape
+    out_dict = {}
+    trunc_warn = 0
+
+    if task == 'em':
+        out_dict['var_ordinal'] = np.zeros((n,p))
+        out_dict['Z_imp'] = Z.copy()
+        out_dict['Z'] = Z
+        out_dict['loglik'] = 0
+        out_dict['C'] = np.zeros((p,p))
+    elif task == 'fillup':
+        out_dict['Z_imp'] = Z.copy()
+        out_dict['var_ordinal'] = np.zeros((n,p))
+    elif task == 'sample':
+        try:
+            num = kwargs['num']
+            seed = kwargs['seed']
+        except KeyError:
+            print('Additional arguments of num and seed need to be provided to sample latent row')
+            raise 
+        out_dict['Z_imp_sample'] = np.empty((n,p,num))
+    else:
+        print(f'invalid task type: {task}')
+        raise 
+
+    for i in range(n):
+        row_out_dict = _latent_operation_row(task, Z[i], r_lower[i], r_upper[i], sigma, num_ord_updates, ord_indices, **kwargs)
+        trunc_warn += row_out_dict['truncnorm_warn']
+        if task == 'em':
+            for key in ['Z_imp', 'Z', 'var_ordinal']:
+                out_dict[key][i] = row_out_dict[key]
+            for key in ['loglik', 'C']:
+                out_dict[key] += row_out_dict[key]
+        elif task == 'fillup':
+            for key in ['Z_imp', 'var_ordinal']:
+                out_dict[key][i] = row_out_dict[key]
+        elif task == 'sample':
+            missing_indices = np.isnan(Z[i])
+            if any(missing_indices):
+                out_dict['Z_imp_sample'][i, missing_indices, :] = row_out_dict['Z_imp_sample']
+        else:
+            pass
+
+    if trunc_warn>0:
+        print(f'Bad truncated normal stats appear {trunc_warn} times, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
+
+    return out_dict
+
+def _latent_operation_row(task, Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates, ord_indices, **kwargs):
+    '''
+    Args:
+        task: str in ['em', 'fillup', 'sample']
+    Returns:
+        out_dict:
+            If task == 'em', 
+                out_dict has keys ['truncnorm_warn', 'Z', 'var_ordinal', 'Z_imp', 'loglik', 'C'].
+            If task == 'fillup',
+                out_dict has keys ['truncnorm_warn', 'var_ordinal', 'Z_imp'].
+            If task == 'sample',
+                out_dict has keys ['truncnorm_warn', 'Z_imp_sample']
+    '''
+    if task == 'sample':
+        try:
+            num = kwargs['num']
+            seed = kwargs['seed']
+        except KeyError:
+            print('Additional arguments of num and seed need to be provided to sample latent row')
+            raise 
+    out_dict = {'truncnorm_warn':False}
+
     missing_indices = np.isnan(Z_row)
     obs_indices = ~missing_indices
+    # special cases
+    if task == 'sample' and all(obs_indices):
+        out_dict['Z_imp_sample'] = None
+        return out_dict
 
-    p, num_ord = Z_row.shape[0], r_upper_row.shape[0]
-    # ord_obs_indices = (np.arange(p) < num_ord) & obs_indices
+    # prepare indices and quantities
     ord_obs_indices = ord_indices & obs_indices
     ord_in_obs = ord_obs_indices[obs_indices]
+    obs_in_ord = ord_obs_indices[ord_indices]
 
     out = _prepare_quantity_GC(missing_indices, sigma)
     sigma_obs_obs_inv = out['sigma_obs_obs_inv']
@@ -63,7 +112,7 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates, o
     J_obs_missing = out['J_obs_missing']
     sigma_obs_missing = out['sigma_obs_missing']
 
-    # OBSERVED ORDINAL ELEMENTS
+    # conduct ordinal truncated mean & var approximation
     sigma_obs_obs_inv_Zobs_row_func = lambda z_row_obs, sigma_obs_obs_inv=sigma_obs_obs_inv: np.dot(sigma_obs_obs_inv, z_row_obs)
     Z_row, var_ordinal, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
                                                            r_lower_row=r_lower_row, 
@@ -74,31 +123,59 @@ def _em_step_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates, o
                                                            obs_indices = obs_indices,
                                                            ord_obs_indices = ord_obs_indices,
                                                            ord_in_obs = ord_in_obs,
-                                                           obs_in_ord = ord_obs_indices[ord_indices]
+                                                           obs_in_ord = obs_in_ord 
                                                            )
+    out_dict['truncnorm_warn'] = truncnorm_warn
 
-    # initialize C 
-    C = np.diag(var_ordinal)
+    if task == 'em':
+        out_dict['Z'] = Z_row
+        out_dict['var_ordinal'] = var_ordinal
+    if task == 'fillup':
+        out_dict['var_ordinal'] = var_ordinal
 
-    # MISSING ELEMENTS
     Z_obs = Z_row[obs_indices]
-    Z_imp_row = Z_row.copy()
-    if any(missing_indices):
-        # impute missing entries
-        Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs) 
-        # expected covariance in the missing dimensions
-        C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
-        # expected covariance brought due to the oridnal entries
-        if var_ordinal.sum() > 0: 
-            cov_missing_obs_ord = J_obs_missing[ord_in_obs].T * var_ordinal[ord_obs_indices]
-            C[np.ix_(missing_indices, ord_obs_indices)] += cov_missing_obs_ord
-            C[np.ix_(ord_obs_indices, missing_indices)] += cov_missing_obs_ord.T
-            C[np.ix_(missing_indices, missing_indices)] += np.matmul(cov_missing_obs_ord, J_obs_missing[ord_in_obs])
+    # fill up the missing entries at Z_row
+    if task in ['em', 'fillup']:
+        Z_imp_row = Z_row.copy()
+        if any(missing_indices):
+            Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs) 
+        out_dict['Z_imp'] = Z_imp_row
 
-    # log-likelihood at observed locations
-    negloglik = np.linalg.slogdet(sigma_obs_obs)[1] + np.inner(np.dot(sigma_obs_obs_inv, Z_obs), Z_obs) + p*np.log(2*np.pi)
-    loglik = -negloglik/2.0 
-    return C, Z_imp_row, Z_row, var_ordinal, loglik, truncnorm_warn
+    # sample the missing entries 
+    # TODO: also sample the ordinal entries
+    if task == 'sample':
+        np.random.seed(seed)
+        cond_mean = np.matmul(J_obs_missing.T,Z_obs)
+        cond_cov = sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
+        Z_imp_num = np.random.multivariate_normal(mean=cond_mean, cov=cond_cov, size=num)
+        # Z_imp_num has shape (n_mis, num)
+        Z_imp_num = Z_imp_num.T
+        out_dict['Z_imp_sample'] = Z_imp_num
+
+    # compute log-likelihood at observed entries
+    if task == 'em':
+        p = len(Z_row)
+        negloglik = np.linalg.slogdet(sigma_obs_obs)[1] + np.inner(np.dot(sigma_obs_obs_inv, Z_obs), Z_obs) + p*np.log(2*np.pi)
+        loglik = -negloglik/2.0 
+        out_dict['loglik'] = loglik
+
+    # compute the conditional covariance
+    if task == 'em':
+        # initialize C 
+        C = np.diag(var_ordinal)
+
+        if any(missing_indices):
+            # expected covariance in the missing dimensions
+            C[np.ix_(missing_indices, missing_indices)] += sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
+            # expected covariance brought due to the oridnal entries
+            if var_ordinal.sum() > 0: 
+                cov_missing_obs_ord = J_obs_missing[ord_in_obs].T * var_ordinal[ord_obs_indices]
+                C[np.ix_(missing_indices, ord_obs_indices)] += cov_missing_obs_ord
+                C[np.ix_(ord_obs_indices, missing_indices)] += cov_missing_obs_ord.T
+                C[np.ix_(missing_indices, missing_indices)] += np.matmul(cov_missing_obs_ord, J_obs_missing[ord_in_obs])
+        out_dict['C'] = C
+  
+    return out_dict
 
 def _prepare_quantity_GC(missing_indices, sigma):
     obs_indices = ~missing_indices
@@ -123,25 +200,6 @@ def _prepare_quantity_GC(missing_indices, sigma):
     out['sigma_obs_obs_inv'] = sigma_obs_obs_inv
 
     return out
-
-# Deprecated:
-# can be found in a one-line ord_obs_indcies[obs_indices]
-def _get_ord_in_obs(ord_indices, obs_indices):
-    indices = []
-    obs_index = 0
-    for i, (_ord,_obs) in enumerate(zip(ord_indices, obs_indices)):
-        # only process when enourtering an observed entry
-        if _obs:
-            # if the observed entry is ordinal, add the current obs_index as the relative order: ord_in_obs
-            if _ord:
-                indices.append(obs_index)
-            obs_index += 1
-    return indices
-
-
-
-
-
 
 def _LRGC_em_row_step_body_(args):
     """
@@ -256,110 +314,6 @@ def _LRGC_em_col_step_body_col(Z_col, C_ord_col, U_col, sigma, A, S, SS):
     s = np.dot(rj, w_new)
     return w_new, s
 
-def _fillup_latent_body_(args):
-    return _fillup_latent_body(*args)
-
-def _fillup_latent_body(Z, r_lower, r_upper, sigma, num_ord_updates, ord_indices):
-    n, p = Z.shape
-    Z_imp = Z.copy()
-    C_ord = np.zeros_like(Z)
-    trunc_warn = False
-    for i in range(n):
-        z_imp, c_ord, warn = _fillup_latent_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], sigma, num_ord_updates, ord_indices)
-        Z_imp[i] = z_imp
-        C_ord[i] = c_ord
-        trunc_warn = trunc_warn or warn
-    # TO DO: no need to return Z, just edit it during the process
-    if trunc_warn:
-        print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
-    return Z_imp, C_ord
-
-def _fillup_latent_body_row(Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates, ord_indices):
-    missing_indices = np.isnan(Z_row)
-    obs_indices = ~missing_indices
-    ord_obs_indices = ord_indices & obs_indices
-
-    out = _prepare_quantity_GC(missing_indices, sigma)
-    sigma_obs_obs_inv = out['sigma_obs_obs_inv']
-    J_obs_missing = out['J_obs_missing']
-
-
-    # OBSERVED ORDINAL ELEMENTS
-    sigma_obs_obs_inv_Zobs_row_func = lambda z_row_obs, sigma_obs_obs_inv=sigma_obs_obs_inv: np.dot(sigma_obs_obs_inv, z_row_obs)
-    Z_row, var_ordinal, truncnorm_warn = _update_z_row_ord(z_row = Z_row, 
-                                                           r_lower_row = r_lower_row, 
-                                                           r_upper_row = r_upper_row, 
-                                                           num_ord_updates = num_ord_updates,
-                                                           sigma_obs_obs_inv_Zobs_row_func = sigma_obs_obs_inv_Zobs_row_func,
-                                                           sigma_obs_obs_inv_diag = np.diag(sigma_obs_obs_inv),
-                                                           obs_indices = obs_indices,
-                                                           ord_obs_indices = ord_obs_indices,
-                                                           ord_in_obs = ord_obs_indices[obs_indices],
-                                                           obs_in_ord = ord_obs_indices[ord_indices]
-                                                           )
-
-    Z_obs = Z_row[obs_indices]
-    Z_imp_row = np.copy(Z_row)
-    if any(missing_indices):
-        Z_imp_row[missing_indices] = np.matmul(J_obs_missing.T,Z_obs) 
-    return Z_imp_row, var_ordinal, truncnorm_warn
-
-def _sample_latent_body_(args):
-    return _sample_latent_body(*args)
-
-def _sample_latent_body(Z, r_lower, r_upper, sigma, num, seed, num_ord_updates, ord_indices):
-    n, p = Z.shape
-    Z_imp_num = np.empty((n,p,num))
-    trunc_warn = False
-    for i, Z_row in enumerate(Z):
-        missing_indices = np.isnan(Z_row)
-        if any(missing_indices):
-            z_imp, warn = _sample_latent_body_row(Z_row, r_lower[i], r_upper[i], sigma, num, seed, num_ord_updates, ord_indices)
-            Z_imp_num[i, missing_indices, :] = z_imp
-            trunc_warn = trunc_warn or warn
-    if trunc_warn:
-        print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
-    return Z_imp_num
-
-def _sample_latent_body_row(Z_row, r_lower_row, r_upper_row, sigma, num, seed, num_ord_updates):
-    missing_indices = np.isnan(Z_row)
-    obs_indices = ~missing_indices
-    ord_obs_indices = ord_indices & obs_indices
-
-    if any(missing_indices):
-        out = _prepare_quantity_GC(missing_indices, sigma)
-        sigma_obs_obs_inv = out['sigma_obs_obs_inv']
-        sigma_obs_missing = out['sigma_obs_missing']
-        sigma_missing_missing = out['sigma_missing_missing']
-        J_obs_missing = out['J_obs_missing']
-        sigma_obs_missing = out['sigma_obs_missing']
-
-        # OBSERVED ORDINAL ELEMENTS
-        sigma_obs_obs_inv_Zobs_row_func = lambda z_row_obs, sigma_obs_obs_inv=sigma_obs_obs_inv: np.dot(sigma_obs_obs_inv, z_row_obs)
-        Z_row, _, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
-                                                     r_lower_row=r_lower_row, 
-                                                     r_upper_row=r_upper_row, 
-                                                     num_ord_updates=num_ord_updates,
-                                                     sigma_obs_obs_inv_Zobs_row_func = sigma_obs_obs_inv_Zobs_row_func,
-                                                     sigma_obs_obs_inv_diag=np.diag(sigma_obs_obs_inv),
-                                                     obs_indices = obs_indices,
-                                                     ord_obs_indices = ord_obs_indices,
-                                                     ord_in_obs = ord_obs_indices[obs_indices],
-                                                     obs_in_ord = ord_obs_indices[ord_indices]
-                                                     )
-
-        Z_obs = Z_row[obs_indices]
-        np.random.seed(seed)
-        cond_mean = np.matmul(J_obs_missing.T,Z_obs)
-        cond_cov = sigma_missing_missing - np.matmul(J_obs_missing.T, sigma_obs_missing)
-        Z_imp_num = np.random.multivariate_normal(mean=cond_mean, cov=cond_cov, size=num)
-        # Z_imp_num has shape (n_mis, num)
-        Z_imp_num = Z_imp_num.T
-    else:
-        Z_imp_num = None
-        truncnorm_warn = False
-
-    return Z_imp_num, truncnorm_warn
 
 def _update_z_row_ord(z_row, r_lower_row, r_upper_row, 
                       num_ord_updates, 

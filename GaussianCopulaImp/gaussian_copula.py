@@ -1,6 +1,6 @@
 from .transform_function import TransformFunction
 from .online_transform_function import OnlineTransformFunction
-from .embody import _em_step_body_, _fillup_latent_body_, _sample_latent_body_
+from .embody import _latent_operation_body_
 from scipy.stats import norm, truncnorm
 import numpy as np
 import pandas as pd
@@ -540,63 +540,7 @@ class GaussianCopula():
         self._set_n_iter(converged, i)
         return  Z_imp, C_ord
 
-    def _sample_latent(self, Z, Z_ord_lower, Z_ord_upper, num, num_ord_updates=2):
-        '''
-        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
-        '''
-        n, p = Z.shape
-        max_workers = self._max_workers
 
-        if max_workers ==1:
-            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num, self._seed, num_ord_updates, self._ord_indices)
-            Z_imp_num = _sample_latent_body_(args)
-        else:
-            divide = n/max_workers * np.arange(max_workers+1)
-            divide = divide.astype(int)
-            args = [(
-                    Z[divide[i]:divide[i+1]].copy(), 
-                    Z_ord_lower[divide[i]:divide[i+1]], 
-                    Z_ord_upper[divide[i]:divide[i+1]], 
-                    self._corr, 
-                    num, self._seed, num_ord_updates,
-                    self._ord_indices
-                    ) for i in range(max_workers)]
-            Z_imp_num = np.empty((n,p,num))
-            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
-                res = pool.map(_sample_latent_body_, args)
-                for i, Z_imp_divide in enumerate(res):
-                    Z_imp_num[divide[i]:divide[i+1],...] = Z_imp_divide
-        return Z_imp_num
-
-    def _fillup_latent(self, Z, Z_ord_lower, Z_ord_upper, num_ord_updates=2):
-        '''
-        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
-        '''
-        n, p = Z.shape
-        max_workers = self._max_workers
-
-        if max_workers ==1:
-            args = (Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates,self._ord_indices)
-            Z_imp, C_ord = _fillup_latent_body_(args)
-        else:
-            divide = n/max_workers * np.arange(max_workers+1)
-            divide = divide.astype(int)
-            args = [(
-                    Z[divide[i]:divide[i+1]].copy(), 
-                    Z_ord_lower[divide[i]:divide[i+1]], 
-                    Z_ord_upper[divide[i]:divide[i+1]], 
-                    self._corr, 
-                    num_ord_updates,
-                    self._ord_indices
-                    ) for i in range(max_workers)]
-            Z_imp = np.empty((n,p))
-            C_ord = np.empty((n,p))
-            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
-                res = pool.map(_fillup_latent_body_, args)
-                for i, (Z_imp_divide, C_ord_divide) in enumerate(res):
-                    Z_imp[divide[i]:divide[i+1]] = Z_imp_divide
-                    C_ord[divide[i]:divide[i+1]] = C_ord_divide
-        return Z_imp, C_ord
 
     def partial_fit_transform(self, X_batch, step_size=0.5, marginal_update=True):
         """
@@ -688,6 +632,22 @@ class GaussianCopula():
                 pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsamples+1)
         return pval, diff
 
+    def get_ordinal_indices_with_truncated(self, r_lower, r_upper):
+        '''
+        The ord_indices stores the indices not only for ordinal variables, but also for three types of truncated variables.
+        Now return 2D boolean matrix of actuall ordinal indices that correspond to a truncated normal variable.
+        Each row should only evaluate to True at a subset of _ord_indices
+        '''
+        n, k = r_lower.shape
+        p = len(_ord_indices)
+        _ord_matrix = np.ones((n,p)) == 0
+        for i in range(n):
+            # remove truncated columns at non-truncated values
+            false_ord = np.isclose(r_lower[i], r_upper[i]) 
+            actual_ord = self._ord_indices.copy()
+            actual_ord[self.ord_indices[false_ord]] = False
+            _ord_matrix[i] = actual_ord
+        return _ord_matrix
 
     def _em_step(self, Z, r_lower, r_upper):
         """
@@ -710,36 +670,105 @@ class GaussianCopula():
         max_workers = self._max_workers
         num_ord_updates = self._num_ord_updates
 
+        out_dict = {}
+        out_dict['var_ordinal'] = np.zeros((n,p))
+        out_dict['Z_imp'] = Z.copy()
+        out_dict['Z'] = Z
+        out_dict['loglik'] = 0
+        out_dict['C'] = np.zeros((p,p))
+
         if max_workers ==1:
-            args = (Z, r_lower, r_upper, self._corr, num_ord_updates, self._ord_indices)
-            C, Z_imp, Z, C_ord, loglik = _em_step_body_(args)
-            C = C/n
+            args = ('em', Z, r_lower, r_upper, self._corr, num_ord_updates, self._ord_indices)
+            res_dict = _latent_operation_body_(args)
+            res_dict['C'] /= n
         else:
             divide = n/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
-            args = [(
-                    np.copy(Z[divide[i]:divide[i+1],:]), 
-                    r_lower[divide[i]:divide[i+1],:], 
-                    r_upper[divide[i]:divide[i+1],:], 
-                    self._corr, num_ord_updates,
-                    self._ord_indices
+            args = [('em',
+                     Z[divide[i]:divide[i+1]].copy(), 
+                     r_lower[divide[i]:divide[i+1]], 
+                     r_upper[divide[i]:divide[i+1]], 
+                     self._corr, 
+                     num_ord_updates,
+                     self._ord_indices
                     ) for i in range(max_workers)]
-            Z_imp = np.empty((n,p))
-            C = np.zeros((p,p))
-            C_ord = np.empty((n,p))
-            loglik = 0
             with ProcessPoolExecutor(max_workers=max_workers) as pool: 
-                res = pool.map(_em_step_body_, args)
-                for i,(C_divide, Z_imp_divide, Z_divide, C_ord_divide, loglik_divide) in enumerate(res):
-                    C += C_divide/n
-                    Z_imp[divide[i]:divide[i+1],:] = Z_imp_divide
-                    Z[divide[i]:divide[i+1],:] = Z_divide
-                    C_ord[divide[i]:divide[i+1],:] = C_ord_divide
-                    loglik += loglik_divide
+                res = pool.map(_latent_operation_body_, args)
+                for i, res_dict in enumerate(res):
+                    for key in ['Z_imp', 'Z', 'var_ordinal']:
+                        out_dict[key][divide[i]:divide[i+1]] = res_dict[key]
+                    for key in ['loglik', 'C']:
+                        out_dict[key] += res_dict[key]/n
 
+        Z_imp = out_dict['Z_imp']
+        C = out_dict['C']
+        C_ord = out_dict['var_ordinal']
         sigma = np.cov(Z_imp, rowvar=False) + C 
         sigma = self._project_to_correlation(sigma)
-        return sigma, Z_imp, Z, C_ord, loglik/n
+        return sigma, Z_imp, Z, C_ord, out_dict['loglik']
+
+    def _sample_latent(self, Z, Z_ord_lower, Z_ord_upper, num, num_ord_updates=2):
+        '''
+        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
+        '''
+        n, p = Z.shape
+        max_workers = self._max_workers
+
+        additional_args = {'num':num, 'seed':self._seed}
+
+        if max_workers ==1:
+            args = ('sample', Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates, self._ord_indices, additional_args)
+            res_dict = _latent_operation_body_(args)
+            Z_imp_num = res_dict['Z_imp_sample']
+        else:
+            divide = n/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [('sample',
+                     Z[divide[i]:divide[i+1]].copy(), 
+                     Z_ord_lower[divide[i]:divide[i+1]], 
+                     Z_ord_upper[divide[i]:divide[i+1]], 
+                     self._corr, 
+                     num_ord_updates,
+                     self._ord_indices,
+                     additional_args
+                    ) for i in range(max_workers)]
+            Z_imp_num = np.empty((n,p,num))
+            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
+                res = pool.map(_latent_operation_body_, args)
+                for i, res_dict in enumerate(res):
+                    Z_imp_num[divide[i]:divide[i+1],...] = res_dict['Z_imp_sample']
+        return Z_imp_num
+
+    def _fillup_latent(self, Z, Z_ord_lower, Z_ord_upper, num_ord_updates=2):
+        '''
+        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
+        '''
+        n, p = Z.shape
+        max_workers = self._max_workers
+
+        if max_workers ==1:
+            args = ('fillup', Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates, self._ord_indices)
+            res_dict = _latent_operation_body_(args)
+            Z_imp, C_ord = res_dict['Z_imp'], res_dict['var_ordinal']
+        else:
+            divide = n/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [('fillup',
+                     Z[divide[i]:divide[i+1]].copy(), 
+                     Z_ord_lower[divide[i]:divide[i+1]], 
+                     Z_ord_upper[divide[i]:divide[i+1]], 
+                     self._corr, 
+                     num_ord_updates,
+                     self._ord_indices
+                    ) for i in range(max_workers)]
+            Z_imp = np.empty((n,p))
+            C_ord = np.empty((n,p))
+            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
+                res = pool.map(_latent_operation_body_, args)
+                for i, res_dict in enumerate(res):
+                    Z_imp[divide[i]:divide[i+1]] = res_dict['Z_imp']
+                    C_ord[divide[i]:divide[i+1]] = res_dict['var_ordinal']
+        return Z_imp, C_ord
 
     def _get_cond_std_missing(self, X=None, Cord=None):
         '''
@@ -980,9 +1009,6 @@ class GaussianCopula():
                         'truncated_twoside': np.array(twoside_truncated_indices)
                         }
         return var_type_dict
-
-
-    
 
     def _update_loglikelihood(self, iterloglik):
         converged = False
