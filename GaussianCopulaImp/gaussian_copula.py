@@ -140,7 +140,6 @@ class GaussianCopula():
         self.ord_indices = None 
         self._min_ord_ratio = min_ord_ratio
         self.var_type_dict = {}
-        self.has_truncation = False
         self.use_truncation_var = use_truncation_var
 
         self._seed = random_state
@@ -160,28 +159,6 @@ class GaussianCopula():
         self.likelihood = []
         self.features_names = None
         self.corr_diff = defaultdict(list)
-
-    def store_var_type(self, **indices):
-        '''
-        Store the integer based index for special variable types in self.var_type_dict. 
-        '''
-        for name, values in indices.items():
-            if values is not None:
-                self.var_type_dict[name] = values
-
-    def get_cdf_estimation_type(self, p):
-        '''
-        Return a list of str indicating the type of cdf estimation using self.var_type_dict
-        '''
-        cdf_types = np.array(['empirical'] * p, dtype = 'U20')
-        inverse_cdf_types = np.array(['empirical'] * p, dtype = 'U20')
-        for name, values in self.var_type_dict.items():
-            cdf_types[values] = name
-            inverse_cdf_types[values] = name
-            print(name)
-            print(cdf_types)
-        return cdf_types, inverse_cdf_types
-
 
     def fit(self, X, 
             ordinal = None, 
@@ -481,6 +458,9 @@ class GaussianCopula():
 
         # initialize the correlation matrix
         self._corr = np.corrcoef(Z_imp, rowvar=False)
+        if self._verbose > 1:
+            _svdvals = svdvals(self._corr)
+            print(f'singular values of the initialized correlation has min {_svdvals.min():.5f} and max {_svdvals.max():.5f}')
 
         # permutation of indices of data for stochastic fitting
         np.random.seed(self._seed)
@@ -677,10 +657,14 @@ class GaussianCopula():
         out_dict['loglik'] = 0
         out_dict['C'] = np.zeros((p,p))
 
+        has_truncation = self.has_truncation()
         if max_workers ==1:
-            args = ('em', Z, r_lower, r_upper, self._corr, num_ord_updates, self._ord_indices)
+            args = ('em', Z, r_lower, r_upper, self._corr, num_ord_updates, self._ord_indices, has_truncation)
             res_dict = _latent_operation_body_(args)
-            res_dict['C'] /= n
+            for key in ['Z_imp', 'Z', 'var_ordinal']:
+                out_dict[key] = res_dict[key]
+            for key in ['loglik', 'C']:
+                out_dict[key] += res_dict[key]/n
         else:
             divide = n/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
@@ -690,7 +674,8 @@ class GaussianCopula():
                      r_upper[divide[i]:divide[i+1]], 
                      self._corr, 
                      num_ord_updates,
-                     self._ord_indices
+                     self._ord_indices,
+                     has_truncation
                     ) for i in range(max_workers)]
             with ProcessPoolExecutor(max_workers=max_workers) as pool: 
                 res = pool.map(_latent_operation_body_, args)
@@ -715,9 +700,9 @@ class GaussianCopula():
         max_workers = self._max_workers
 
         additional_args = {'num':num, 'seed':self._seed}
-
+        has_truncation = self.has_truncation()
         if max_workers ==1:
-            args = ('sample', Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates, self._ord_indices, additional_args)
+            args = ('sample', Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates, self._ord_indices, has_truncation, additional_args)
             res_dict = _latent_operation_body_(args)
             Z_imp_num = res_dict['Z_imp_sample']
         else:
@@ -730,6 +715,7 @@ class GaussianCopula():
                      self._corr, 
                      num_ord_updates,
                      self._ord_indices,
+                     has_truncation,
                      additional_args
                     ) for i in range(max_workers)]
             Z_imp_num = np.empty((n,p,num))
@@ -746,8 +732,9 @@ class GaussianCopula():
         n, p = Z.shape
         max_workers = self._max_workers
 
+        has_truncation = self.has_truncation()
         if max_workers ==1:
-            args = ('fillup', Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates, self._ord_indices)
+            args = ('fillup', Z, Z_ord_lower, Z_ord_upper, self._corr, num_ord_updates, self._ord_indices, has_truncation)
             res_dict = _latent_operation_body_(args)
             Z_imp, C_ord = res_dict['Z_imp'], res_dict['var_ordinal']
         else:
@@ -759,7 +746,8 @@ class GaussianCopula():
                      Z_ord_upper[divide[i]:divide[i+1]], 
                      self._corr, 
                      num_ord_updates,
-                     self._ord_indices
+                     self._ord_indices,
+                     has_truncation
                     ) for i in range(max_workers)]
             Z_imp = np.empty((n,p))
             C_ord = np.empty((n,p))
@@ -925,6 +913,32 @@ class GaussianCopula():
         self.set_indices(X)
         return X
 
+    def store_var_type(self, **indices):
+        '''
+        Store the integer based index for special variable types in self.var_type_dict. 
+        '''
+        for name, values in indices.items():
+            if values is not None:
+                self.var_type_dict[name] = values
+
+    def has_truncation(self):
+        truncation = False
+        for name in ['truncated_lower', 'truncated_upper', 'truncated_twoside']:
+            if name in self.var_type_dict:
+                truncation = True
+        return truncation
+
+    def get_cdf_estimation_type(self, p):
+        '''
+        Return a list of str indicating the type of cdf estimation using self.var_type_dict
+        '''
+        cdf_types = np.array(['empirical'] * p, dtype = 'U20')
+        inverse_cdf_types = np.array(['empirical'] * p, dtype = 'U20')
+        for name, values in self.var_type_dict.items():
+            cdf_types[values] = name
+            inverse_cdf_types[values] = name
+        return cdf_types, inverse_cdf_types
+        
     def set_indices(self, X):
         '''
         set variable types
@@ -942,7 +956,6 @@ class GaussianCopula():
         for _type in ['truncated_lower', 'truncated_upper', 'truncated_twoside']:
             _indices = var_type_dict[_type]
             if any(_indices):
-                self.has_truncation = True
                 self.var_type_dict[_type] = np.flatnonzero(_indices)
 
     def get_vartype_indices(self, X):

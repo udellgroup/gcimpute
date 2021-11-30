@@ -10,7 +10,7 @@ def _latent_operation_body_(args):
     else:
         return _latent_operation_body(*args)
 
-def _latent_operation_body(task, Z, r_lower, r_upper, sigma, num_ord_updates, ord_indices, **kwargs):
+def _latent_operation_body(task, Z, r_lower, r_upper, sigma, num_ord_updates, ord_indices, has_truncation, **kwargs):
     '''
     Args:
         task: str in ['em', 'fillup', 'sample']
@@ -48,8 +48,20 @@ def _latent_operation_body(task, Z, r_lower, r_upper, sigma, num_ord_updates, or
         print(f'invalid task type: {task}')
         raise 
 
-    for i in range(n):
-        row_out_dict = _latent_operation_row(task, Z[i], r_lower[i], r_upper[i], sigma, num_ord_updates, ord_indices, **kwargs)
+    for i, Z_row in enumerate(Z):
+        if has_truncation:
+            false_ord = np.isclose(r_lower[i], r_upper[i]) 
+            true_ord = ~false_ord
+            # adjust r_lower and r_upper
+            r_lower_row, r_upper_row = r_lower[i][true_ord], r_upper[i][true_ord]
+            # adjust ord_indices
+            ord_indices_input = ord_indices.copy()
+            int_ord_indices = np.flatnonzero(ord_indices)
+            ord_indices_input[int_ord_indices[false_ord]] = False
+        else:
+            r_lower_row, r_upper_row = r_lower[i], r_upper[i]
+            ord_indices_input = ord_indices
+        row_out_dict = _latent_operation_row(task, Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates, ord_indices_input, **kwargs)
         trunc_warn += row_out_dict['truncnorm_warn']
         if task == 'em':
             for key in ['Z_imp', 'Z', 'var_ordinal']:
@@ -60,7 +72,7 @@ def _latent_operation_body(task, Z, r_lower, r_upper, sigma, num_ord_updates, or
             for key in ['Z_imp', 'var_ordinal']:
                 out_dict[key][i] = row_out_dict[key]
         elif task == 'sample':
-            missing_indices = np.isnan(Z[i])
+            missing_indices = np.isnan(Z_row)
             if any(missing_indices):
                 out_dict['Z_imp_sample'][i, missing_indices, :] = row_out_dict['Z_imp_sample']
         else:
