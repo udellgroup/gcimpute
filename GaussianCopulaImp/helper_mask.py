@@ -4,6 +4,7 @@ def mask_types(X, mask_num, seed, var_types):
     """
     Masks mask_num entries of the continuous, ordinal, and binary columns of X
     """
+    X = np.asarray(X)
     p = sum([len(x) for x in var_types.values()])
     if X.shape[1] != p:
         print('Inconsistent data and var types')
@@ -26,6 +27,7 @@ def mask_MCAR(X, mask_fraction, seed=1, max_try=50, allow_empty_row=False):
     """
     Masks mask_fraction entries of X, raising a value error if an entire row is masked
     """
+    X = np.asarray(X)
     rng = np.random.default_rng(seed)
     count = 0
     X_masked = np.copy(X) 
