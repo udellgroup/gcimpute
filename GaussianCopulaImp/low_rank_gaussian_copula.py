@@ -39,7 +39,7 @@ class LowRankGaussianCopula(GaussianCopula):
     get_reliability(Ximp=None, alpha=0.95)
         Get the reliability, a relative quantity across all imputed entries, when either all variables are continuous or all variables are ordinal 
     '''
-    def __init__(self, rank, min_ord_ratio=0.1, tol=0.03, likelihood_min_increase=0, max_iter=50, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1):
+    def __init__(self, rank, tol=0.03, **kwargs):
         '''
         Parameters:
             rank: int
@@ -51,20 +51,10 @@ class LowRankGaussianCopula(GaussianCopula):
                 The convergence threshold. EM iterations will stop when the parameter update ratio is below this threshold.
             likelihood_min_increase: float, default=0.01
                 The minimal likelihood increase ratio required to keep running the EM algorithm.
-            max_iter: int, default=100
-                The number of EM iterations to perform.
-            random_state: int, default=101
-                Controls the randomness in generating latent ordinal values. Not used if there is no ordinal variable.
-            n_jobs: int, default=1
-                The number of jobs to run in parallel.
-            verbose: int, default=0
-                Controls the verbosity when fitting and predicting. 
-            num_ord_updates: int, default=1
-                Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
-                We do not recommend using value larger than 1 (the default value) at this moment. It will slow the speed without clear 
-                performance improvement.
+            kwargs:
+                Keyword arguments of GaussianCopula()
         '''
-        super().__init__(training_mode='standard', min_ord_ratio=min_ord_ratio, tol=tol, likelihood_min_increase=likelihood_min_increase, max_iter=max_iter, random_state=random_state, n_jobs=n_jobs, verbose=verbose, num_ord_updates=num_ord_updates)
+        super().__init__(training_mode='standard', tol=tol, **kwargs)
         self._rank = rank
         self._W = None
         self._sigma = None
@@ -240,7 +230,10 @@ class LowRankGaussianCopula(GaussianCopula):
                     Z[divide[i]:divide[i+1]].copy(), 
                     r_lower[divide[i]:divide[i+1]], 
                     r_upper[divide[i]:divide[i+1]], 
-                    U, d, sigma, num_ord_updates,
+                    U, 
+                    d, 
+                    sigma, 
+                    num_ord_updates,
                     self._ord_indices
                     ) for i in range(max_workers)]
             A = np.zeros((n,rank,rank))
@@ -259,6 +252,7 @@ class LowRankGaussianCopula(GaussianCopula):
                     C_ord[divide[i]:divide[i+1]] = C_ord_i
                     loglik += loglik_i
                     s_row += s_row_i
+
             # computation across columns
             divide = p/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
@@ -267,7 +261,9 @@ class LowRankGaussianCopula(GaussianCopula):
                     C_ord[:,divide[i]:divide[i+1]],
                     U[divide[i]:divide[i+1]],
                     sigma,
-                    A, S, SS, 
+                    A, 
+                    S, 
+                    SS, 
                     ) for i in range(max_workers)]
             W_new = np.zeros_like(U)
             s_col = 0

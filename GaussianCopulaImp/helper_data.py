@@ -64,9 +64,9 @@ def generate_sigma(seed=1, p=15, random_generator=None):
     return np.matmul(np.matmul(D_neg_half, covariance), D_neg_half)
 
 def generate_LRGC(var_types, rank, sigma, n=500, ord_num=5, cont_transform=lambda x:x, seed=1, ordinalize_by='dist', random_generator=None):
-    cont_index = var_types['cont']
-    ord_index = var_types['ord']
-    bin_index = var_types['bin']
+    cont_index = var_types['cont'] if 'cont' in var_types else []
+    ord_index = var_types['ord'] if 'ord' in var_types else []
+    bin_index = var_types['bin'] if 'bin' in var_types else []
     all_index = cont_index + ord_index + bin_index
     p = len(all_index)
 

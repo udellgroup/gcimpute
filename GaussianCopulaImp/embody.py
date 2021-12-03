@@ -278,11 +278,8 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
                                                            ord_in_obs = ord_obs_indices[obs_indices],
                                                            obs_in_ord = ord_obs_indices[ord_indices]
                                                            )
-    # WARNING: 
-    # In the use case where all data are ordinal, using latent values before ordinal update gives better parameter estimation 
-    # Need to understand why that happens.
-    # Debugging needed
-    # zi_obs = Z_row[obs_indices] 
+    
+    zi_obs = Z_row[obs_indices] 
     si = np.dot(AU, zi_obs)
     ssi = np.dot(AU * var_ordinal[obs_indices], AU.T) + np.outer(si, si.T)
 
@@ -355,7 +352,9 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
         ord_obs_iter = np.flatnonzero(ord_obs_indices)
         ord_in_obs_iter = np.flatnonzero(ord_in_obs)
         obs_in_ord_iter = np.flatnonzero(obs_in_ord)
-        assert len(ord_obs_iter) == len(ord_in_obs_iter) == len(obs_in_ord_iter)
+
+        #assert len(ord_obs_iter) == len(ord_in_obs_iter) == len(obs_in_ord_iter)
+        
         for _ in range(num_ord_updates):
             sigma_obs_obs_inv_Zobs_row = sigma_obs_obs_inv_Zobs_row_func(z_row[obs_indices])
             # TO DO: accelerate is possible. Replace the for-loop with vector/matrix computation.
