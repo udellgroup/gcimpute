@@ -136,9 +136,10 @@ def load_GSS(cols=None, to_array = False):
     '''
     stream = pkg_resources.resource_stream(__name__, 'data/GSS_2014_18var.csv')
     data = pd.read_csv(stream, index_col=0)
+    data.rename(columns={'CLASS_':'CLASS'}, inplace=True)
     _cols = data.columns.tolist()
     if cols is None:
-        cols = ['AGE', 'DEGREE', 'RINCOME', 'CLASS_', 'SATJOB', 'WEEKSWRK', 'HAPPY', 'HEALTH']
+        cols = ['AGE', 'DEGREE', 'RINCOME', 'CLASS', 'SATJOB', 'WEEKSWRK', 'HAPPY', 'HEALTH']
     try:
         data = data[cols]
     except KeyError:
