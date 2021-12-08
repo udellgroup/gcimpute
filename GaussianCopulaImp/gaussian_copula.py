@@ -157,6 +157,7 @@ class GaussianCopula():
         # attributes
         self.n_iter_ = 0
         self.likelihood = []
+        self.corrupdate = []
         self.features_names = None
         self.corr_diff = defaultdict(list)
 
@@ -165,16 +166,17 @@ class GaussianCopula():
             lower_truncated= None, 
             upper_truncated = None, 
             twosided_truncated = None, 
-            poisson = None):
+            poisson = None,
+            **kwargs):
         '''
         Fits the Gaussian copula imputer on the input data X.
 
         Parameters:
             X: array-like of shape (n_samples, n_features)
                 Input data
-            cont_indices: array-list of int, optional (default=None)
-                If not None, the set of continuout variable indices. 
-                If None, the continuout variable indices will be determined by self.min_ord_ratio.
+            ordinal, lower_truncated, upper_truncated, twosided_truncated, poisson: list of the corresponding variable type indices
+            kwargs:
+                additional keyword arguments for fit_offline
         '''
         if self._training_mode == 'minibatch-online':
             print('fit method is not implemented for minibatch-online mode, since the fitting and imputation are done in the unit of mini-batch. To impute the missing entries, call fit_transform.')
@@ -186,7 +188,7 @@ class GaussianCopula():
                                 twosided_truncated = twosided_truncated,
                                 poisson = poisson
                                )
-            return self.fit_offline(X)
+            return self.fit_offline(X, **kwargs)
 
     def transform(self, X=None, num_ord_updates=2):
         '''
@@ -208,7 +210,8 @@ class GaussianCopula():
                       lower_truncated= None, 
                       upper_truncated = None, 
                       twosided_truncated = None, 
-                      poisson = None
+                      poisson = None,
+                      **kwargs
                      ):
         '''
         Fit to data, then transform it. 
@@ -235,7 +238,7 @@ class GaussianCopula():
             X = self._preprocess_data(X)
             return self.fit_transform_online(X)
         else:
-            return self.fit_transform_offline(X)
+            return self.fit_transform_offline(X, **kwargs)
 
     def get_params(self):
         '''
@@ -346,36 +349,46 @@ class GaussianCopula():
         out = {'pval':pvals, 'statistics':test_stats}
         return out
 
-    def fit_transform_offline(self, X):
+    def fit_transform_offline(self, X, **kwargs):
         '''
         Implement fit_transform when the training mode is 'standard' or 'minibatch-offline'
         '''
-        self.fit_offline(X)
+        self.fit_offline(X, **kwargs)
         X_imp = self.transform()
         return X_imp
 
-    def fit_offline(self, X):
+    def fit_offline(self, X, first_fit=True, max_iter=None):
         '''
         Implement fit when the training mode is 'standard' or 'minibatch-offline'
         '''
         X = self._preprocess_data(X)
         # do marginal estimation
         # for every fit, a brand new marginal transformation is used 
-        cdf_types, inverse_cdf_types = self.get_cdf_estimation_type(p = X.shape[1])
-        self.transform_function = TransformFunction(X, 
-                                                    cont_indices=self._cont_indices, 
-                                                    ord_indices=self._ord_indices,
-                                                    cdf_types=cdf_types,
-                                                    inverse_cdf_types=inverse_cdf_types
-                                                   )
+        if first_fit:
+            cdf_types, inverse_cdf_types = self.get_cdf_estimation_type(p = X.shape[1])
+            self.transform_function = TransformFunction(X, 
+                                                        cont_indices=self._cont_indices, 
+                                                        ord_indices=self._ord_indices,
+                                                        cdf_types=cdf_types,
+                                                        inverse_cdf_types=inverse_cdf_types
+                                                       )
 
-        Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent()
+            Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent()
+        else:
+            Z_ord_lower, Z_ord_upper = self._Z_ord_lower, self._Z_ord_upper
+            Z = self._latent_Zimp.copy()
+            Z[np.isnan(X)] = np.nan
+
         # estimate copula correlation matrix
-        Z_imp, C_ord = self._fit_covariance(Z, Z_ord_lower, Z_ord_upper)
+        Z_imp, C_ord = self._fit_covariance(Z, Z_ord_lower, Z_ord_upper, first_fit=first_fit, max_iter=max_iter)
 
         # attributes to store after model fitting
         self._latent_Zimp = Z_imp
         self._latent_Cord = C_ord
+
+        # attributes to store for additional training
+        self._Z_ord_lower = Z_ord_lower
+        self._Z_ord_upper = Z_ord_upper
 
     def fit_transform_online(self, X):
         '''
@@ -437,20 +450,10 @@ class GaussianCopula():
         Z[:, self.ord_indices] = Z_ord
         return Z, Z_ord_lower, Z_ord_upper
 
-    def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper):
-        """
-        Fits the gaussian copula correlation matrix using only the transformed data in the latent space.
-
-        Args:
-            Z (nsamples, nfeatures)
-                Transformed latent matrix
-            Z_ord_upper, Z_ord_lower (nsamples, nfeatures_ord)
-                Upper and lower bound to sample from
-        Returns:
-            C_ord
-            Z_imp (nsamples, nfeatures)
-                The completed matrix in the latent space
-        """
+    def _init_copula_corr(self, Z):
+        '''
+        Initialize the copula correlaiont matrix using incomplete Z. First complete Z and then takes its sample correlaiton matrix.
+        '''
         n,p = Z.shape
         # mean impute the missing continuous values for the sake of covariance estimation
         Z_imp = Z.copy()
@@ -462,9 +465,29 @@ class GaussianCopula():
             _svdvals = svdvals(self._corr)
             print(f'singular values of the initialized correlation has min {_svdvals.min():.5f} and max {_svdvals.max():.5f}')
 
+    def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper, first_fit=True, max_iter=None):
+        """
+        Fits the gaussian copula correlation matrix using only the transformed data in the latent space.
+
+        Args:
+            Z (nsamples, nfeatures)
+                Transformed latent matrix
+            Z_ord_upper, Z_ord_lower (nsamples, nfeatures_ord)
+                Upper and lower bound to sample from
+            max_iter: int or None
+                The maximum number of iterations to run. If None, use self,_max_iter.
+        Returns:
+            C_ord
+            Z_imp (nsamples, nfeatures)
+                The completed matrix in the latent space
+        """
+        if first_fit:
+           self._init_copula_corr(Z)
+
         # permutation of indices of data for stochastic fitting
-        np.random.seed(self._seed)
-        training_permutation = np.random.permutation(n)
+        if self._training_mode=='minibatch-offline':
+            np.random.seed(self._seed)
+            training_permutation = np.random.permutation(n)
 
         # determine the maximal iteraitons to run        
         if self._training_mode=='minibatch-offline' and self._num_pass is not None:
@@ -472,9 +495,8 @@ class GaussianCopula():
             if self._verbose>0:
                 print(f'The number of maximum iteration is set as {max_iter} to have {self._num_pass} passes over all data')
         else:
-            max_iter = self._max_iter
+            max_iter = self._max_iter if max_iter is None else max_iter
 
-        loglik = self.likelihood
         converged = False
         for i in range(max_iter):
             # track the change ratio of copula correlation as stopping criterion
@@ -504,6 +526,7 @@ class GaussianCopula():
 
             # stop if the change in the correlation estimation is below the threshold
             corrudpate = self._get_scaled_diff(prev_corr, self._corr)
+            self.corrupdate.append(corrudpate)
             if self._verbose>0:
                 print(f"Iteration {i+1}: copula parameter change {corrudpate:.4f}, likelihood {iterloglik:.4f}")
             
@@ -612,22 +635,6 @@ class GaussianCopula():
                 pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsamples+1)
         return pval, diff
 
-    def get_ordinal_indices_with_truncated(self, r_lower, r_upper):
-        '''
-        The ord_indices stores the indices not only for ordinal variables, but also for three types of truncated variables.
-        Now return 2D boolean matrix of actuall ordinal indices that correspond to a truncated normal variable.
-        Each row should only evaluate to True at a subset of _ord_indices
-        '''
-        n, k = r_lower.shape
-        p = len(_ord_indices)
-        _ord_matrix = np.ones((n,p)) == 0
-        for i in range(n):
-            # remove truncated columns at non-truncated values
-            false_ord = np.isclose(r_lower[i], r_upper[i]) 
-            actual_ord = self._ord_indices.copy()
-            actual_ord[self.ord_indices[false_ord]] = False
-            _ord_matrix[i] = actual_ord
-        return _ord_matrix
 
     def _em_step(self, Z, r_lower, r_upper):
         """
@@ -963,7 +970,7 @@ class GaussianCopula():
         Return the variable types used during the model fitting. Each variable is one of the following:
             'continuous', 'ordinal', 'lower_truncated', 'upper_truncated', 'twosided_truncated'
         '''
-        if features_names is not None:
+        if feature_names is not None:
             names = list(feature_names)
         else:
             names = list(range(len(self._cont_indices))) if self.features_names is None else self.features_names

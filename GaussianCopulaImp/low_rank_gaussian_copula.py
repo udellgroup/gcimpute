@@ -106,21 +106,13 @@ class LowRankGaussianCopula(GaussianCopula):
                 std_cond[i, missing_indices] = np.sqrt(_var)
         return std_cond
 
-    def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper):
-        """
-        See the doc for _fit_covariance in class GaussianCopula()
-        """
-
+    def _init_copula_corr(self, Z, Z_ord_lower, Z_ord_upper):
+        '''
+        Implement _init_copula_corr for LRGC. 
+        '''
         # Refine Z_imp using truncated (low-rank) SVD for missing entries to obtain initial parameter estimate
         Z_imp = Z.copy()
         Z_imp = self._init_impute_svd(Z_imp, self._rank, Z_ord_lower, Z_ord_upper)
-        # Form latent variable matrix
-        # Update entries at obseved ordinal locations from SVD initialization
-        if any(self._ord_indices):
-            Z_ord = Z[:, self._ord_indices].copy()
-            obs_ord = ~np.isnan(Z_ord)
-            Z_ord[obs_ord] = Z_imp[:,self._ord_indices][obs_ord].copy()
-            Z[:, self._ord_indices] = Z_ord
 
         # initialize the parameter estimate 
         corr = np.corrcoef(Z_imp, rowvar=False)
@@ -128,11 +120,29 @@ class LowRankGaussianCopula(GaussianCopula):
         sigma = np.mean(d[self._rank:])
         W = u[:,:self._rank] * (np.sqrt(d[:self._rank] - sigma))
         self._W, self._sigma = self._scale_corr(W, sigma)
+
         if self._verbose>1:
             print(f'Ater initialization, W has shape {self._W.shape} and sigma is {self._sigma:.4f}')
 
+        return Z_imp
+
+    def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper, first_fit=True, max_iter=None):
+        """
+        See the doc for _fit_covariance in class GaussianCopula()
+        """
+        if first_fit:
+            Z_imp = self._init_copula_corr(Z, Z_ord_lower, Z_ord_upper)
+            # Form latent variable matrix: Update entries at obseved ordinal locations from SVD initialization
+            if any(self._ord_indices):
+                Z_ord = Z[:, self._ord_indices].copy()
+                obs_ord = ~np.isnan(Z_ord)
+                Z_ord[obs_ord] = Z_imp[:,self._ord_indices][obs_ord].copy()
+                Z[:, self._ord_indices] = Z_ord
+
+        max_iter = self._max_iter if max_iter is None else max_iter
+
         converged = False
-        for i in range(self._max_iter):
+        for i in range(max_iter):
             prev_W = self._W
 
             # run EM iteration
@@ -142,6 +152,7 @@ class LowRankGaussianCopula(GaussianCopula):
             # stop if the change in the parameter estimation is below the threshold
             # wupdate = self._get_scaled_diff(prev_W, self._W)
             wupdate = grassman_dist(prev_W, self._W)[0]
+            self.corrupdate.append(wupdate)
             if self._verbose>0:
                 print(f'Interation {i+1}: noise ratio estimate {self._sigma:.4f}, copula parameter change {wupdate:.4f}, likelihood {iterloglik:.4f}')
 
