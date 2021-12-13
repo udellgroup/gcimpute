@@ -130,7 +130,7 @@ def generate_mixed_from_gc(sigma=None, n=2000, seed=1,
         X[:,ind] = cont_to_ord(X[:,ind], k=2, by=cutoff_by, random_generator=rng)
     return X
 
-def load_GSS(cols=None, to_array = False):
+def load_GSS(cols = 'tutorial', to_array = False):
     '''
     Return a subset of General social survey (GSS) datasets selected in year 2014, consisting of 18 variables and 2538 subjects.
     '''
@@ -138,18 +138,38 @@ def load_GSS(cols=None, to_array = False):
     data = pd.read_csv(stream, index_col=0)
     data.rename(columns={'CLASS_':'CLASS'}, inplace=True)
     _cols = data.columns.tolist()
-    if cols is None:
-        cols = ['AGE', 'DEGREE', 'RINCOME', 'CLASS', 'SATJOB', 'WEEKSWRK', 'HAPPY', 'HEALTH']
-    try:
-        data = data[cols]
-    except KeyError:
-        print(f'{cols} must be a subset of {_cols}')
+    if isinstance(cols, str):
+        if cols == 'tutorial':
+            cols = ['AGE', 'DEGREE', 'RINCOME', 'CLASS', 'SATJOB', 'WEEKSWRK', 'HAPPY', 'HEALTH']
+        elif cols == 'KDD':
+            cols = _cols
+    if isinstance(cols, list):
+        try:
+            data = data[cols]
+        except KeyError:
+            print(f'{cols} must be a subset of {_cols}')
+            raise
+    else:
+        print('Invalid cols argument')
         raise
+
     return np.array(data) if to_array else data
 
-def load_movielens1m_top150():
-    stream = pkg_resources.resource_stream(__name__, 'data/movielens1m_top150movie.csv')
+def load_movielens1m(num = 150, min_obs = 2, verbose = False):
+    assert num <= 207
+    stream = pkg_resources.resource_stream(__name__, 'data/movielens1m_1kratings_top207.csv')
     data = pd.read_csv(stream, index_col=0).to_numpy()
+    # select columns
+    thre = np.sort(np.isnan(data).mean(axis=0))[num-1]
+    index = np.isnan(data).mean(axis=0) <= thre
+    data = data[:,index]
+    # select rows
+    index = (~np.isnan(data)).sum(axis=1) >= min_obs
+    data = data[index]
+    if verbose:
+        n,p=data.shape
+        obs_ratio=(~np.isnan(data)).mean()
+        print(f'The loaded dataset consists of {n} users and {p} movies with {obs_ratio*100:.1f}% ratings observed')
     return data
 
 

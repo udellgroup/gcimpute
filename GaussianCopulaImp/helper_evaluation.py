@@ -6,7 +6,10 @@ def get_mae(x_imp, x_true, x_obs=None):
     """
     gets Mean Absolute Error (MAE) between x_imp and x_true
     """
+    x_imp = np.asarray(x_imp)
+    x_true = np.asarray(x_true)
     if x_obs is not None:
+        x_obs = np.asarray(x_obs)
         loc = np.isnan(x_obs) & (~np.isnan(x_true))
     else:
         loc = ~np.isnan(x_true)
@@ -18,7 +21,10 @@ def get_rmse(x_imp, x_true, x_obs = None, relative=False):
     """
     gets Root Mean Squared Error (RMSE) or Normalized Root Mean Squared Error (NRMSE) between x_imp and x_true
     """
+    x_imp = np.asarray(x_imp)
+    x_true = np.asarray(x_true)
     if x_obs is not None:
+        x_obs = np.asarray(x_obs)
         loc = np.isnan(x_obs) & (~np.isnan(x_true))
     else:
         loc = ~np.isnan(x_true)
@@ -39,6 +45,10 @@ def get_smae(x_imp, x_true, x_obs,
     """
     gets Scaled Mean Absolute Error (SMAE) between x_imp and x_true
     """
+    x_imp = np.asarray(x_imp)
+    x_true = np.asarray(x_true)
+    x_obs = np.asarray(x_obs)
+
     p = x_obs.shape[1]
     # the first column records the imputation error of x_imp,
     # while the second column records the imputation error of baseline
@@ -94,6 +104,10 @@ def get_smae_batch(x_imp, x_true, x_obs,
     '''
     Compute SMAE in the unit of a mini-batch
     '''
+    x_imp = np.asarray(x_imp)
+    x_true = np.asarray(x_true)
+    x_obs = np.asarray(x_obs)
+    
     result = []
     baseline = np.nanmedian(x_obs,0) if baseline is None else baseline
     for imp, true, obs in zip(batch_iterable(x_imp,batch_size), batch_iterable(x_true,batch_size), batch_iterable(x_obs,batch_size)):

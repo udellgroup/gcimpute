@@ -151,6 +151,8 @@ class GaussianCopula():
         self._num_ord_updates = num_ord_updates
         self._num_pass = num_pass
 
+        self._iter = 0
+
         # model parameter
         self._corr = None
         
@@ -178,16 +180,18 @@ class GaussianCopula():
             kwargs:
                 additional keyword arguments for fit_offline
         '''
+        self.store_var_type(ordinal = ordinal, 
+                            lower_truncated = lower_truncated,
+                            upper_truncated = upper_truncated,
+                            twosided_truncated = twosided_truncated,
+                            poisson = poisson
+                           )
+
         if self._training_mode == 'minibatch-online':
             print('fit method is not implemented for minibatch-online mode, since the fitting and imputation are done in the unit of mini-batch. To impute the missing entries, call fit_transform.')
             raise
         else:
-            self.store_var_type(ordinal = ordinal, 
-                                lower_truncated = lower_truncated,
-                                upper_truncated = upper_truncated,
-                                twosided_truncated = twosided_truncated,
-                                poisson = poisson
-                               )
+            
             return self.fit_offline(X, **kwargs)
 
     def transform(self, X=None, num_ord_updates=2):
@@ -234,11 +238,18 @@ class GaussianCopula():
                             twosided_truncated = twosided_truncated,
                             poisson = poisson
                            )
+        
+
         if self._training_mode == 'minibatch-online':
-            X = self._preprocess_data(X)
-            return self.fit_transform_online(X)
+            X = self._preprocess_data(X, set_indices=False)
+            if 'X_true' in kwargs:
+                self.set_indices(np.asarray(kwargs['X_true']))
+            kwargs_online = {name:kwargs[name] for name in ['n_train', 'X_true'] if name in kwargs}
+            return self.fit_transform_online(X, **kwargs_online)
         else:
-            return self.fit_transform_offline(X, **kwargs)
+            X = self._preprocess_data(X)
+            kwargs_offline = {name:kwargs[name] for name in ['first_fit', 'max_iter'] if name in kwargs}
+            return self.fit_transform_offline(X, **kwargs_offline)
 
     def get_params(self):
         '''
@@ -390,13 +401,14 @@ class GaussianCopula():
         self._Z_ord_lower = Z_ord_lower
         self._Z_ord_upper = Z_ord_upper
 
-    def fit_transform_online(self, X):
+    def fit_transform_online(self, X, n_train=0, X_true=None):
         '''
         Implement fit_transform when the training mode is 'minibatch-online'
         '''
         X = np.array(X)
         cdf_types, inverse_cdf_types = self.get_cdf_estimation_type(p = X.shape[1])
-        self.transform_function = OnlineTransformFunction(self._cont_indices, self._ord_indices, 
+        self.transform_function = OnlineTransformFunction(self._cont_indices, 
+                                                          self._ord_indices, 
                                                           window_size=self._window_size, 
                                                           cdf_types=cdf_types,
                                                           inverse_cdf_types=inverse_cdf_types
@@ -405,17 +417,24 @@ class GaussianCopula():
         X_imp = np.zeros_like(X)
         self._corr = np.identity(p)
 
+        # initialize the model
+        n_train = self._batch_size if n_train == 0 else n_train
+        assert n_train > 0
+        if X_true is not None:
+            X_train = X_true[np.arange(n_train)]
+        else:
+            X_train = X[np.arange(n_train)]
+        _ = self.partial_fit(X_batch = X_train, step_size=1)
+
         i=0
         while True:
-            batch_lower= i*self._batch_size
-            batch_upper=min((i+1)*self._batch_size, n)
+            batch_lower = n_train + i*self._batch_size
+            batch_upper = min(n_train + (i+1)*self._batch_size, n)
             if batch_lower>=n:
                 break 
             indices = np.arange(batch_lower, batch_upper, 1)
-            # Use the first batch to initialize the window. Thus in evaluation the first batch should be ignored.
-            if i==0:
-                self.transform_function.update_window(X[indices,:])
-            X_imp[indices,:] = self.partial_fit_transform(X[indices,:], step_size=self.stepsize(i+1))
+            _X_true = None if X_true is None else X_true[indices]
+            X_imp[indices] = self.partial_fit_transform(X[indices], step_size=self.stepsize(i+1), X_true=_X_true)
             i+=1
         return X_imp
 
@@ -465,6 +484,7 @@ class GaussianCopula():
             _svdvals = svdvals(self._corr)
             print(f'singular values of the initialized correlation has min {_svdvals.min():.5f} and max {_svdvals.max():.5f}')
 
+
     def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper, first_fit=True, max_iter=None):
         """
         Fits the gaussian copula correlation matrix using only the transformed data in the latent space.
@@ -484,6 +504,7 @@ class GaussianCopula():
         if first_fit:
            self._init_copula_corr(Z)
 
+        n = len(Z)
         # permutation of indices of data for stochastic fitting
         if self._training_mode=='minibatch-offline':
             np.random.seed(self._seed)
@@ -498,6 +519,7 @@ class GaussianCopula():
             max_iter = self._max_iter if max_iter is None else max_iter
 
         converged = False
+        Z_imp = np.empty_like(Z)
         for i in range(max_iter):
             # track the change ratio of copula correlation as stopping criterion
             prev_corr = self._corr
@@ -524,11 +546,12 @@ class GaussianCopula():
                 step_size = self.stepsize(i+1)
                 self._corr = corr*step_size + (1 - step_size)*prev_corr
 
+            self._iter += 1
             # stop if the change in the correlation estimation is below the threshold
             corrudpate = self._get_scaled_diff(prev_corr, self._corr)
             self.corrupdate.append(corrudpate)
             if self._verbose>0:
-                print(f"Iteration {i+1}: copula parameter change {corrudpate:.4f}, likelihood {iterloglik:.4f}")
+                print(f"Iteration {self._iter+1}: copula parameter change {corrudpate:.4f}, likelihood {iterloglik:.4f}")
             
             # append new likelihood and determine if early stopping criterion is satisfied
             converged = self._update_loglikelihood(iterloglik)
@@ -544,8 +567,7 @@ class GaussianCopula():
         return  Z_imp, C_ord
 
 
-
-    def partial_fit_transform(self, X_batch, step_size=0.5, marginal_update=True):
+    def partial_fit_transform(self, X_batch, step_size=0.5, marginal_update=True, X_true=None):
         """
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
@@ -553,6 +575,12 @@ class GaussianCopula():
         Args:
             X_batch (matrix): data matrix with entries to use to update copula and be imputed
             step_size (float in (0,1)): tunes how much to weight new covariance estimates
+            marginal_update: 
+                whether to update the marginal using observation in the new minibatch
+            X_true:
+                If not None, it indicates that some (could be all) of the missing entries of X_batch are revealed,
+                and stored in X_true, after the imputation of X_batch. Those observation entries will be used to 
+                update the model. 
         Returns:
             X_imp (matrix): X_batch with missing values imputed
         """
@@ -561,7 +589,8 @@ class GaussianCopula():
         X_imp = self.transform(X = X_batch, num_ord_updates=self._num_ord_updates)
         # use new model to update model parameters
         prev_corr = self._corr.copy()
-        new_corr = self.partial_fit(X_batch=X_batch, step_size=step_size, model_update=True, marginal_update=marginal_update)
+        X_batch_fit = X_batch if X_true is None else X_true
+        new_corr = self.partial_fit(X_batch=X_batch_fit, step_size=step_size, model_update=True, marginal_update=marginal_update)
         diff = self.get_matrix_diff(prev_corr, self._corr, self._corr_diff_type)
         self._update_corr_diff(diff)
         return X_imp
@@ -910,14 +939,15 @@ class GaussianCopula():
         return np.linalg.norm(sigma - prev_sigma) / np.linalg.norm(sigma)
 
 
-    def _preprocess_data(self, X):
+    def _preprocess_data(self, X, set_indices = True):
         '''
         Store column names, set continuous/ordinal variable indices and change X to be a numpy array
         '''
         if hasattr(X, 'columns'):
             self.features_names = np.array(X.columns.to_list())
-        X = np.array(X)
-        self.set_indices(X)
+        X = np.asarray(X)
+        if set_indices:
+            self.set_indices(X)
         return X
 
     def store_var_type(self, **indices):

@@ -39,7 +39,7 @@ class LowRankGaussianCopula(GaussianCopula):
     get_reliability(Ximp=None, alpha=0.95)
         Get the reliability, a relative quantity across all imputed entries, when either all variables are continuous or all variables are ordinal 
     '''
-    def __init__(self, rank, tol=0.03, **kwargs):
+    def __init__(self, rank, tol=0.01, **kwargs):
         '''
         Parameters:
             rank: int
@@ -58,6 +58,8 @@ class LowRankGaussianCopula(GaussianCopula):
         self._rank = rank
         self._W = None
         self._sigma = None
+
+        self.corrupdate_grassman = []
 
     def get_params(self):
         '''
@@ -150,11 +152,11 @@ class LowRankGaussianCopula(GaussianCopula):
             self._W, self._sigma = W_new, sigma_new
 
             # stop if the change in the parameter estimation is below the threshold
-            # wupdate = self._get_scaled_diff(prev_W, self._W)
-            wupdate = grassman_dist(prev_W, self._W)[0]
+            wupdate = self._get_scaled_diff(prev_W, self._W)
             self.corrupdate.append(wupdate)
+            self.corrupdate_grassman.append(grassman_dist(prev_W, self._W)[0])
             if self._verbose>0:
-                print(f'Interation {i+1}: noise ratio estimate {self._sigma:.4f}, copula parameter change {wupdate:.4f}, likelihood {iterloglik:.4f}')
+                print(f'Interation {i+1}: noise ratio {self._sigma:.4f}, copula parameter change {wupdate:.4f}, likelihood {iterloglik:.4f}')
 
             # append new likelihood and determine if early stopping criterion is satisfied
             converged = self._update_loglikelihood(iterloglik)
