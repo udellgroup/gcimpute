@@ -59,7 +59,7 @@ class LowRankGaussianCopula(GaussianCopula):
         self._W = None
         self._sigma = None
 
-        self.corrupdate_grassman = []
+        #self.corrupdate_grassman = []
 
     def get_params(self):
         '''
@@ -128,7 +128,7 @@ class LowRankGaussianCopula(GaussianCopula):
 
         return Z_imp
 
-    def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper, first_fit=True, max_iter=None):
+    def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper, first_fit=True, max_iter=None, convergence_verbose=True):
         """
         See the doc for _fit_covariance in class GaussianCopula()
         """
@@ -151,12 +151,13 @@ class LowRankGaussianCopula(GaussianCopula):
             W_new, sigma_new, Z, C, iterloglik = self._em_step(Z, Z_ord_lower, Z_ord_upper) 
             self._W, self._sigma = W_new, sigma_new
 
+            self._iter += 1
             # stop if the change in the parameter estimation is below the threshold
             wupdate = self._get_scaled_diff(prev_W, self._W)
             self.corrupdate.append(wupdate)
-            self.corrupdate_grassman.append(grassman_dist(prev_W, self._W)[0])
+            #self.corrupdate_grassman.append(grassman_dist(prev_W, self._W)[0])
             if self._verbose>0:
-                print(f'Interation {i+1}: noise ratio {self._sigma:.4f}, copula parameter change {wupdate:.4f}, likelihood {iterloglik:.4f}')
+                print(f'Interation {self._iter}: noise ratio {self._sigma:.4f}, copula parameter change {wupdate:.4f}, likelihood {iterloglik:.4f}')
 
             # append new likelihood and determine if early stopping criterion is satisfied
             converged = self._update_loglikelihood(iterloglik)
@@ -168,38 +169,13 @@ class LowRankGaussianCopula(GaussianCopula):
                 break
 
         # store the number of iterations and print if converged
-        self._set_n_iter(converged, i)
+        if convergence_verbose:
+            self._set_n_iter(converged, i)
 
-        S = self._comp_S(Z) # re-estimate S to ensure numerical stability
-        Z_imp = self._impute(Z, S, self._W)
+        Z_imp = self._impute(Z, self._W, self._sigma)
         return Z_imp, C
 
-
-    def _comp_S(self, Z):
-        """
-        Intermidiate step.
-        It seems that S must be updated using the last obtained W and sigma, otherwise numerical instability happens. 
-        Such problem is not seen in R implementation. Keep an eye.
-        Args:
-            Z (matrix): the transformed value, at observed continuous entry; the conditional mean, at observed ordinal entry; NA elsewhere
-        Returns:
-            S: a factor used for imputation
-        """
-        W, sigma = self._W, self._sigma
-        n, k = Z.shape[0], W.shape[1]
-        U, d, _ = np.linalg.svd(W, full_matrices=False)
-        S = np.zeros((n,k))
-        for i in range(n):
-            obs_indices = np.nonzero(~np.isnan(Z[i,:]))[0]
-
-            zi_obs = Z[i,obs_indices]
-            Ui_obs = U[obs_indices,:]
-            UU_obs = np.dot(Ui_obs.T, Ui_obs) # YX: better edit to avoid vector-vector inner product
-
-            S[i,:] = np.linalg.solve(UU_obs + sigma * np.diag(1.0/np.square(d)), np.dot(Ui_obs.T, zi_obs))
-        return S
-
-    def _impute(self, Z, S, W):
+    def _impute(self, Z, W, sigma):
         """
         Impute missing values
         Args:
@@ -214,8 +190,17 @@ class LowRankGaussianCopula(GaussianCopula):
         Zimp = np.copy(Z)
         U,d,_ = np.linalg.svd(W, full_matrices=False)
         for i in range(n):
-            index_m = np.nonzero(np.isnan(Z[i,:]))
-            Zimp[i,index_m] =  np.dot(U[index_m,:], S[i,:])
+            #index_m = np.nonzero(np.isnan(Z[i]))
+            index_m = np.isnan(Z[i])
+            obs_indices = ~index_m
+
+            zi_obs = Z[i,obs_indices]
+            Ui_obs = U[obs_indices]
+            UU_obs = np.dot(Ui_obs.T, Ui_obs) 
+
+            s = np.linalg.solve(UU_obs + sigma * np.diag(1.0/np.square(d)), np.dot(Ui_obs.T, zi_obs))
+
+            Zimp[i,index_m] =  np.dot(U[index_m], s)
         return Zimp
 
     def _em_step(self, Z, r_lower, r_upper):

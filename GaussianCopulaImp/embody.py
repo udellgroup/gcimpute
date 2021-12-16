@@ -308,17 +308,20 @@ def _LRGC_em_col_step_body(Z, C_ord, U, sigma, A, S, SS):
     p = Z.shape[1]
     s = 0
     for j in range(p):
-        _w, _s = _LRGC_em_col_step_body_col(Z[:,j], C_ord[:,j], U[j], sigma, A, S, SS)
+        index_j = ~np.isnan(Z[:,j])
+        _w, _s = _LRGC_em_col_step_body_col(Z[index_j,j], C_ord[index_j,j], U[j], sigma, A[index_j,:,:], S[index_j], SS[index_j,:,:])
         W[j] = _w
         s += _s
     return W, s
 
 def _LRGC_em_col_step_body_col(Z_col, C_ord_col, U_col, sigma, A, S, SS):
-    index_j = ~np.isnan(Z_col)
     # numerator
-    rj = _sum_2d_scale(M=S, c=Z_col, index=index_j) + np.dot(_sum_3d_scale(A, c=C_ord_col, index=index_j), U_col)
+    # rj = _sum_2d_scale(M=S, c=Z_col, index=index_j) + np.dot(_sum_3d_scale(A, c=C_ord_col, index=index_j), U_col)
+    rj = np.einsum('ij, i -> j', S, Z_col)
+    rj += np.dot(np.einsum('ijk, i -> jk', A, C_ord_col), U_col)
     # denominator
-    Fj = _sum_3d_scale(SS+sigma*A, c=np.ones(A.shape[0]), index = index_j) 
+    # Fj = _sum_3d_scale(SS+sigma*A, c=np.ones(A.shape[0]), index = index_j) 
+    Fj = np.einsum('ijk -> jk', SS+sigma*A)
     w_new = np.linalg.solve(Fj,rj) 
     s = np.dot(rj, w_new)
     return w_new, s
@@ -382,15 +385,3 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
                     truncnorm_warn = True
     return z_row, var_ordinal, truncnorm_warn
 
-def _sum_3d_scale(M, c, index):
-    res = np.empty((M.shape[1], M.shape[2]))
-    for j in range(M.shape[1]):
-        for k in range(M.shape[2]):
-            res[j,k] = np.sum(M[index,j,k] * c[index])
-    return res
-
-def _sum_2d_scale(M, c, index):
-    res = np.empty(M.shape[1])
-    for j in range(M.shape[1]):
-        res[j] = np.sum(M[index,j] * c[index])
-    return res

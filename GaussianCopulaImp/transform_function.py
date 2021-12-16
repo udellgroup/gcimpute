@@ -191,7 +191,7 @@ class TransformFunction():
             # for count data, the corresponding latent interval will be shorter than ordinal treatment
             # refelecting stronger regularization due to parametric model
             threshold = 0.5
-        elif cdf_type not in ['truncated_lower','truncated_upper','truncated_twoside']:
+        elif cdf_type not in ['lower_truncated','upper_truncated','twosided_truncated']:
             print(f"Invalid ordinal marginal estimation argument: {cdf_type}")
             raise NotImplementedError
 
@@ -208,11 +208,11 @@ class TransformFunction():
 
         if cdf_type in ['empirical','poisson']:
             f_marginal = marginal
-        elif cdf_type == 'truncated_lower':
+        elif cdf_type == 'lower_truncated':
             f_marginal = partial(truncated_marginal_lower, x_obs = x_obs)
-        elif cdf_type == 'truncated_upper':
+        elif cdf_type == 'upper_truncated':
             f_marginal = partial(truncated_marginal_upper, x_obs = x_obs)
-        elif cdf_type == 'truncated_twoside':
+        elif cdf_type == 'twosided_truncated':
             f_marginal = partial(truncated_marginal_twoside, x_obs = x_obs)
 
         return f_marginal
@@ -250,11 +250,11 @@ class TransformFunction():
             func = partial(inverse_ecdf, x_obs=x_obs)
         elif inverse_cdf_type == 'poisson':
             func = lambda q, mu=x_obs.mean(): poisson.ppf(q, mu=mu)
-        elif inverse_cdf_type == 'truncated_lower':
+        elif inverse_cdf_type == 'lower_truncated':
             func = partial(truncated_inverse_marginal_lower, x_obs=x_obs)
-        elif inverse_cdf_type == 'truncated_upper':
+        elif inverse_cdf_type == 'upper_truncated':
             func = partial(truncated_inverse_marginal_upper, x_obs=x_obs)
-        elif inverse_cdf_type == 'truncated_twoside':
+        elif inverse_cdf_type == 'twosided_truncated':
             func = partial(truncated_inverse_marginal_twoside, x_obs=x_obs)
         else:
             raise NotImplemented("Invalid ordinal inverse marginal estimation argument")

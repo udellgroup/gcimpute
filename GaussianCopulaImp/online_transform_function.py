@@ -46,6 +46,7 @@ class OnlineTransformFunction(TransformFunction):
         """
         Update the running window used to estimate marginals with the data in X
         """
+        assert len(X_batch.shape) == 2
         if np.isnan(self.X[0,0]):
             self.init_window(X_batch)
 
