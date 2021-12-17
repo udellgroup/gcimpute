@@ -93,7 +93,8 @@ def generate_mixed_from_gc(sigma=None, n=2000, seed=1,
                            var_types = {'cont':list(range(5)), 'ord':list(range(5, 10)), 'bin':list(range(10, 15))}, 
                            cont_transform = lambda x: expon.ppf(norm.cdf(x), scale=3),
                            ord_transform = None,
-                           cutoff_by='quantile', random_generator=None):
+                           cutoff_by='quantile', qmin=0.05, qmax=0.95,
+                           random_generator=None):
     '''
     sigma: either a single correlation matrix or a list of correlation matrices
     '''
@@ -127,7 +128,7 @@ def generate_mixed_from_gc(sigma=None, n=2000, seed=1,
         X[:, ord_index] = ord_transform(X[:, ord_index])
     # binary
     for ind in bin_index:
-        X[:,ind] = cont_to_ord(X[:,ind], k=2, by=cutoff_by, random_generator=rng)
+        X[:,ind] = cont_to_ord(X[:,ind], k=2, by=cutoff_by, random_generator=rng, qmin=qmin, qmax=qmax)
     return X
 
 def load_GSS(cols = 'tutorial', to_array = False):

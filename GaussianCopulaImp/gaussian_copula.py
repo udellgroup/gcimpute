@@ -53,7 +53,7 @@ class GaussianCopula():
 
     '''
 
-    def __init__(self, training_mode='standard', stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, batch_size=100, window_size=200, min_ord_ratio=0.1, tol=0.01, likelihood_min_increase=0, max_iter=50, num_pass=2, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, corr_diff_type=['F'], use_truncation_var=True):
+    def __init__(self, training_mode='standard', stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, batch_size=100, window_size=200, realtime_marginal=False, min_ord_ratio=0.1, tol=0.01, likelihood_min_increase=0, max_iter=50, num_pass=2, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, corr_diff_type=['F'], use_truncation_var=True):
         '''
         Parameters:
             training_mode: {'standard', 'minibatch-offline', 'minibatch-online'}, default='standard'
@@ -130,6 +130,7 @@ class GaussianCopula():
         self._training_mode = training_mode
         self._batch_size = batch_size
         self._window_size = window_size
+        self._realtime_marginal = realtime_marginal
         self._corr_diff_type = corr_diff_type
 
         # self._cont_indices and self._ord_indices store boolean indexing
@@ -165,6 +166,10 @@ class GaussianCopula():
         self.corrupdate = []
         self.features_names = None
         self.corr_diff = defaultdict(list)
+
+    ################################################
+    #### public functions
+    ################################################
 
     def fit(self, X, 
             ordinal = None, 
@@ -247,6 +252,8 @@ class GaussianCopula():
             X = self._preprocess_data(X, set_indices=False)
             if 'X_true' in kwargs:
                 self.set_indices(np.asarray(kwargs['X_true']))
+            else:
+                self.set_indices(X)
             kwargs_online = {name:kwargs[name] for name in ['n_train', 'X_true'] if name in kwargs}
             return self.fit_transform_online(X, **kwargs_online)
         else:
@@ -416,6 +423,10 @@ class GaussianCopula():
         out = {'pval':pvals, 'statistics':test_stats}
         return out
 
+    ################################################
+    #### offline functions
+    ################################################
+
     def fit_transform_offline(self, X, **kwargs):
         '''
         Implement fit_transform when the training mode is 'standard' or 'minibatch-offline'
@@ -458,6 +469,10 @@ class GaussianCopula():
         self._Z_ord_lower = Z_ord_lower
         self._Z_ord_upper = Z_ord_upper
 
+    ################################################
+    #### online functions 
+    ################################################
+
     def fit_transform_online(self, X, n_train=0, X_true=None):
         '''
         Implement fit_transform when the training mode is 'minibatch-online'
@@ -476,13 +491,11 @@ class GaussianCopula():
         # initialize the model
         n_train = self._batch_size if n_train == 0 else n_train
         assert n_train > 0
-        if X_true is not None:
-            X_train = X_true[np.arange(n_train)]
-        else:
-            X_train = X[np.arange(n_train)]
-
+        ind_train = np.arange(n_train)
+        X_train = X[ind_train] if X_true is None else X_true[ind_train]
         self.transform_function.update_window(X_train)
         _ = self.partial_fit(X_batch = X_train, step_size=1)
+        X_imp[ind_train] = self.transform(X = X_train, num_ord_updates=self._num_ord_updates)
 
         i=0
         while True:
@@ -497,6 +510,99 @@ class GaussianCopula():
             if self._verbose > 0:
                 print(f'finish batch {i}')
         return X_imp
+
+    def partial_fit_transform(self, X_batch, step_size=0.5, X_true=None):
+        """
+        Updates the fit of the copula using the data in X_batch and returns the 
+        imputed values and the new correlation for the copula
+
+        Args:
+            X_batch (matrix): data matrix with entries to use to update copula and be imputed
+            step_size (float in (0,1)): tunes how much to weight new covariance estimates
+            marginal_update: 
+                whether to update the marginal using observation in the new minibatch
+            X_true:
+                If not None, it indicates that some (could be all) of the missing entries of X_batch are revealed,
+                and stored in X_true, after the imputation of X_batch. Those observation entries will be used to 
+                update the model. 
+        Returns:
+            X_imp (matrix): X_batch with missing values imputed
+        """
+        # impute missing entries in new data using previously fitted model
+        # just a step of out-of-sample imputation
+        X_for_update = X_batch if X_true is None else X_true
+
+        if self._realtime_marginal:
+            X_imp = X_batch.copy()
+            for i,x in enumerate(X_batch):
+                X_imp[i] = self.transform(X = x.reshape((1, -1)), num_ord_updates = self._num_ord_updates)
+                self.transform_function.update_window(X_for_update[i].reshape((1, -1)))
+        else:
+            X_imp = self.transform(X = X_batch, num_ord_updates=self._num_ord_updates)
+            self.transform_function.update_window(X_for_update)
+
+        # use new model to update model parameters
+        prev_corr = self._corr.copy()
+        new_corr = self.partial_fit(X_batch=X_for_update, step_size=step_size, model_update=True)
+        diff = self.get_matrix_diff(prev_corr, self._corr, self._corr_diff_type)
+        self._update_corr_diff(diff)
+        return X_imp
+        
+    def partial_fit(self, X_batch, step_size=0.5, model_update=True):
+        '''
+        Update the copula correlation from new samples in X_batch, with given step size
+        '''
+        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_batch)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z_cont = self.transform_function.get_cont_latent(X_to_transform=X_batch) 
+        Z = np.empty_like(X_batch)
+        Z[:, self._cont_indices] = Z_cont
+        Z[:, self._ord_indices] = Z_ord
+        corr, Z_imp, Z, C_ord, loglik = self._em_step(Z, Z_ord_lower, Z_ord_upper)
+
+        new_corr = corr*step_size + (1-step_size)*self._corr
+        if model_update:
+            self._corr = new_corr
+            self._latent_Zimp = Z_imp
+            self._latent_Cord = C_ord
+            self.likelihood.append(loglik)
+
+        return new_corr
+
+    def change_point_test(self, X_batch, step_size, nsamples=100):
+        n,p = X_batch.shape
+        missing_indices = np.isnan(X_batch)
+        prev_corr = self._corr.copy()
+        changing_stat = defaultdict(list)
+
+        X_to_impute = np.zeros_like(X_batch) * np.nan
+        for i in range(nsamples):
+            z = self._rng.multivariate_normal(np.zeros(p), prev_corr, n)
+            # mask
+            x = np.empty((n,p))
+            x[:,self.cont_indices] = self.transform_function.impute_cont_observed(z, X_to_impute)
+            x[:,self.ord_indices] = self.transform_function.impute_ord_observed(z, X_to_impute)
+            x[missing_indices] = np.nan
+            # TODO: compare with enabling marginal_update
+            new_corr = self.partial_fit(x, step_size=step_size, model_update=False, marginal_update=False)
+            diff = self.get_matrix_diff(prev_corr, new_corr, self._corr_diff_type)
+            self._update_corr_diff(diff, output=changing_stat)
+
+        new_corr = self.partial_fit(X_batch, step_size=step_size, model_update=True, marginal_update=True)
+        diff = self.get_matrix_diff(prev_corr, new_corr, self._corr_diff_type)
+        self._update_corr_diff(diff)
+
+        # compute empirical p-values
+        changing_stat = pd.DataFrame(changing_stat)
+        pval = {}
+        if nsamples>0:
+            for t in self._corr_diff_type:
+                pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsamples+1)
+        return pval, diff
+
+    ################################################
+    #### core functions
+    ################################################
 
     def _latent_to_imp(self, Z, X_to_impute=None):
         '''
@@ -628,95 +734,7 @@ class GaussianCopula():
         return  Z_imp, C_ord
 
 
-    def partial_fit_transform(self, X_batch, step_size=0.5, marginal_update=True, X_true=None, realtime_marginal=True):
-        """
-        Updates the fit of the copula using the data in X_batch and returns the 
-        imputed values and the new correlation for the copula
 
-        Args:
-            X_batch (matrix): data matrix with entries to use to update copula and be imputed
-            step_size (float in (0,1)): tunes how much to weight new covariance estimates
-            marginal_update: 
-                whether to update the marginal using observation in the new minibatch
-            X_true:
-                If not None, it indicates that some (could be all) of the missing entries of X_batch are revealed,
-                and stored in X_true, after the imputation of X_batch. Those observation entries will be used to 
-                update the model. 
-        Returns:
-            X_imp (matrix): X_batch with missing values imputed
-        """
-        # impute missing entries in new data using previously fitted model
-        # just a step of out-of-sample imputation
-        X_for_update = X_batch if X_true is None else X_true
-        if realtime_marginal:
-            X_imp = X_batch.copy()
-            for i,x in enumerate(X_batch):
-                X_imp[i] = self.transform(X = x.reshape((1, -1)), num_ord_updates = self._num_ord_updates)
-                self.transform_function.update_window(X_for_update[i].reshape((1, -1)))
-        else:
-            X_imp = self.transform(X = X_batch, num_ord_updates=self._num_ord_updates)
-            self.transform_function.update_window(X_for_update)
-
-        # use new model to update model parameters
-        prev_corr = self._corr.copy()
-        new_corr = self.partial_fit(X_batch=X_for_update, step_size=step_size, model_update=True)
-        diff = self.get_matrix_diff(prev_corr, self._corr, self._corr_diff_type)
-        self._update_corr_diff(diff)
-        return X_imp
-        
-    def partial_fit(self, X_batch, step_size=0.5, model_update=True):
-        '''
-        Update the copula correlation from new samples in X_batch, with given step size
-        '''
-        Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_batch)
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
-        Z_cont = self.transform_function.get_cont_latent(X_to_transform=X_batch) 
-        Z = np.empty_like(X_batch)
-        Z[:, self._cont_indices] = Z_cont
-        Z[:, self._ord_indices] = Z_ord
-        corr, Z_imp, Z, C_ord, loglik = self._em_step(Z, Z_ord_lower, Z_ord_upper)
-
-        new_corr = corr*step_size + (1-step_size)*self._corr
-        if model_update:
-            self._corr = new_corr
-            self._latent_Zimp = Z_imp
-            self._latent_Cord = C_ord
-            self.likelihood.append(loglik)
-
-        return new_corr
-
-
-
-    def change_point_test(self, X_batch, step_size, nsamples=100):
-        n,p = X_batch.shape
-        missing_indices = np.isnan(X_batch)
-        prev_corr = self._corr.copy()
-        changing_stat = defaultdict(list)
-
-        X_to_impute = np.zeros_like(X_batch) * np.nan
-        for i in range(nsamples):
-            z = self._rng.multivariate_normal(np.zeros(p), prev_corr, n)
-            # mask
-            x = np.empty((n,p))
-            x[:,self.cont_indices] = self.transform_function.impute_cont_observed(z, X_to_impute)
-            x[:,self.ord_indices] = self.transform_function.impute_ord_observed(z, X_to_impute)
-            x[missing_indices] = np.nan
-            # TODO: compare with enabling marginal_update
-            new_corr = self.partial_fit(x, step_size=step_size, model_update=False, marginal_update=False)
-            diff = self.get_matrix_diff(prev_corr, new_corr, self._corr_diff_type)
-            self._update_corr_diff(diff, output=changing_stat)
-
-        new_corr = self.partial_fit(X_batch, step_size=step_size, model_update=True, marginal_update=True)
-        diff = self.get_matrix_diff(prev_corr, new_corr, self._corr_diff_type)
-        self._update_corr_diff(diff)
-
-        # compute empirical p-values
-        changing_stat = pd.DataFrame(changing_stat)
-        pval = {}
-        if nsamples>0:
-            for t in self._corr_diff_type:
-                pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsamples+1)
-        return pval, diff
 
 
     def _em_step(self, Z, r_lower, r_upper):
@@ -993,6 +1011,10 @@ class GaussianCopula():
                     Z_ord[i,j] = norm.ppf(u_sample)
         return Z_ord
 
+    ################################################
+    #### helper functions
+    ################################################
+
     def _get_scaled_diff(self, prev_sigma, sigma):
         """
         Get's the scaled difference between two correlation matrices
@@ -1174,25 +1196,6 @@ class GaussianCopula():
             else:
                 print(f"Convergence achieved at iteration {i+1}")
         self.n_iter_ = i+1
-
-
-    def back_to_original_order(self):
-        #mapping = {}
-        num_ord = self._ord_indices.sum()
-        seen_cont = seen_ord = 0
-        orders = [] 
-        for i,index in enumerate(self._cont_indices):
-            if index:
-                #mapping[seen_cont] = i
-                orders.append(seen_cont+num_ord)
-                seen_cont += 1
-            else:
-                orders.append(seen_ord)
-                #mapping[num_cont + seen_ord] = i
-                seen_ord += 1
-        p = len(orders)
-        assert len(set(orders))==p and min(orders)==0 and max(orders)==p-1, 'Func back_to_original_order runs into bugs, please report'
-        return orders
 
 
     def _update_corr_diff(self, corr_diff, output=None):

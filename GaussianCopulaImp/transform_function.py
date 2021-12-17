@@ -16,6 +16,8 @@ class TransformFunction():
         self.cdf_type = cdf_types
         self.inverse_cdf_type = inverse_cdf_types
 
+        self.decay_weights = None
+
     def get_cont_latent(self, X_to_transform=None):
         """
         Return the latent variables corresponding to the continuous columns in X_to_transform.
@@ -72,7 +74,9 @@ class TransformFunction():
         X_imp = X_to_impute.copy()
         for j, _tuple  in enumerate(zip(Z_use.T, X_to_est.T, X_to_impute.T, self.inverse_cdf_type[indices])):
             (z_col, x_est_col, x_imp_col, inverse_cdf_type) = _tuple
-            X_imp[:,j] = self._latent_to_obs_cont(x_obs = x_est_col, z_latent = z_col, x_to_impute = x_imp_col, inverse_cdf_type=inverse_cdf_type)
+            X_imp[:,j] = self._latent_to_obs_cont(x_obs = x_est_col, z_latent = z_col, x_to_impute = x_imp_col, 
+                                                  inverse_cdf_type=inverse_cdf_type, 
+                                                  weights = self.decay_weights)
         return X_imp
 
     def impute_ord_observed(self, Z, X_to_impute=None):
@@ -101,7 +105,6 @@ class TransformFunction():
         '''
         out = np.empty_like(x_to_transform)
         missing = np.isnan(x_to_transform)
-        # TODO: remember marginal estimation for each column
         f_marginal = self._marginal_cont_est(x_obs = x_obs, cdf_type=cdf_type)
         out[~missing] = f_marginal(x_to_transform[~missing])
         out[missing] = np.nan
@@ -114,14 +117,13 @@ class TransformFunction():
         lower = np.empty_like(x_to_transform)
         upper = np.empty_like(x_to_transform)
         missing = np.isnan(x_to_transform)
-        # TODO: remember marginal estimation for each column
         f_marginal = self._marginal_ord_est(x_obs = x_obs, cdf_type=cdf_type)
         lower[~missing], upper[~missing] = f_marginal(x_to_transform[~missing])
         lower[missing], upper[missing] = np.nan, np.nan
         return lower, upper
 
     # TODO: merge _latent_to_obs_cont and _latent_to_obs_ord
-    def _latent_to_obs_cont(self, x_obs, z_latent, x_to_impute=None, inverse_cdf_type='empirical'):
+    def _latent_to_obs_cont(self, x_obs, z_latent, x_to_impute=None, inverse_cdf_type='empirical', weights = None):
         '''
         Transform latent to observed for a single variable
         '''
@@ -130,7 +132,7 @@ class TransformFunction():
         x_imp = x_to_impute.copy()
         missing = np.isnan(x_to_impute)
 
-        f_inverse_marginal = self._inverse_marginal_cont_est(x_obs = x_obs, inverse_cdf_type=inverse_cdf_type)
+        f_inverse_marginal = self._inverse_marginal_cont_est(x_obs = x_obs, inverse_cdf_type=inverse_cdf_type, weights = weights)
         # TODO: try different interpolation strategy
         if any(missing):
             x_imp[missing] = f_inverse_marginal(z_latent[missing])
@@ -185,7 +187,7 @@ class TransformFunction():
         assert l>0, 'Each variable must have at least one observation'
         if cdf_type == 'empirical':
             func = ECDF(x_obs)
-            threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
+            threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0 if len(unique)>1 else 0
         elif cdf_type == 'poisson':
             func = lambda x, mu=x_obs.mean(): poisson.cdf(x, mu = mu)
             # for count data, the corresponding latent interval will be shorter than ordinal treatment
@@ -217,7 +219,7 @@ class TransformFunction():
 
         return f_marginal
 
-    def _inverse_marginal_cont_est(self, x_obs, inverse_cdf_type='empirical'):
+    def _inverse_marginal_cont_est(self, x_obs, inverse_cdf_type='empirical', weights=None):
         '''
         Return the estimated inverse marginal from z to x for a continuous variable.
         '''
@@ -226,7 +228,7 @@ class TransformFunction():
         assert l>0, 'Each variable must have at least one observation'
 
         if inverse_cdf_type == 'empirical':
-            func = lambda q, x_obs=x_obs: np.quantile(x_obs, q)
+            func = self._empirical_cont_quantile(x_obs, weights = weights)
         else:
             raise NotImplemented("Only 'empirical' is allowed for marginal inverse CDF estimation")
 
@@ -236,6 +238,14 @@ class TransformFunction():
             return x
 
         return inverse_marginal
+
+    def _empirical_cont_quantile(self, x_obs, weights=None):
+        if weights is None:
+            func = lambda q, x_obs=x_obs: np.quantile(x_obs, q)
+        else:
+            assert len(weights) == len(x_obs), 'inconsistent sample weights'
+            func = lambda q, x_obs=x_obs: weighted_quantile(values = x_obs, quantiles = q, sample_weight=weights)
+        return func
 
 
     def _inverse_marginal_ord_est(self, x_obs, inverse_cdf_type='empirical'):

@@ -2,10 +2,11 @@ import numpy as np
 from scipy.stats import norm
 from statsmodels.distributions.empirical_distribution import ECDF
 from .transform_function import TransformFunction
+from .marginal_imputation import weighted_quantile
 
 
 class OnlineTransformFunction(TransformFunction):
-    def __init__(self, cont_indices, ord_indices, window_size=100, **kwargs):
+    def __init__(self, cont_indices, ord_indices, window_size=100, decay=None, **kwargs):
         """
         Require window_size to be positive integers.
 
@@ -20,6 +21,12 @@ class OnlineTransformFunction(TransformFunction):
         super().__init__(X=window_init, cont_indices=cont_indices, ord_indices=ord_indices, **kwargs)
         self.window_size = window_size
         self.update_pos = np.zeros(p, dtype=np.int64)
+        
+        if decay is not None:
+            self.decay_weights = np.array([np.power(decay, i) for i in range(window_size)])
+            self.decay_weights /= self.decay_weights.sum()
+        else:
+            self.decay_weights = None
 
     def init_window(self, X_batch):
         """
