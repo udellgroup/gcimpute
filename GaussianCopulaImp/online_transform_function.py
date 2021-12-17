@@ -18,12 +18,14 @@ class OnlineTransformFunction(TransformFunction):
         p = len(cont_indices)
         window_init = np.ones((window_size, p), dtype=np.float64) * np.nan
         # window is stored in self.X
+        # early points appear before later points in self.X
         super().__init__(X=window_init, cont_indices=cont_indices, ord_indices=ord_indices, **kwargs)
         self.window_size = window_size
-        self.update_pos = np.zeros(p, dtype=np.int64)
-        
+        #self.update_pos = np.zeros(p, dtype=np.int64)
+
         if decay is not None:
-            self.decay_weights = np.array([np.power(decay, i) for i in range(window_size)])
+            self.decay_weights = np.array([np.power(decay, i) for i in range(window_size-1, -1, -1)])
+            self.decay_weights = np.round(self.decay_weights, 5)
             self.decay_weights /= self.decay_weights.sum()
         else:
             self.decay_weights = None
@@ -63,25 +65,12 @@ class OnlineTransformFunction(TransformFunction):
             x_obs = x_col[obs_indices]
             num_obs = len(x_obs)
             if num_obs>0:
-                old_pos = self.update_pos[j]
                 if num_obs<self.window_size:
-                    new_pos = (old_pos+num_obs)%self.window_size
-                    if old_pos < new_pos:
-                        indices = np.arange(old_pos, new_pos, 1)
-                    else:
-                        _part_1 = np.arange(old_pos, self.window_size, 1)
-                        _part_2 = np.arange(new_pos)
-                        indices = np.concatenate((_part_1, _part_2))
-                    self.X[indices, j] = x_obs
-                    self.update_pos[j] = new_pos
+                    new_window = np.roll(self.X[:,j], -num_obs)
+                    new_window[-num_obs:] = x_obs.copy()
+                    self.X[:,j] = new_window
                 else:
-                    # update the whole window
-                    _part_1 = np.arange(old_pos, self.window_size, 1)
-                    _part_2 = np.arange(old_pos)
-                    indices = np.concatenate((_part_1, _part_2))
-                    # update the window using most recent observation
-                    # update pos does not change 
-                    self.X[indices, j] = x_obs[-self.window_size:]
+                    self.X[:,j] = x_obs[-self.window_size:].copy()
 
 
 

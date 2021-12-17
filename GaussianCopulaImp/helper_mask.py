@@ -13,11 +13,11 @@ def mask_types(X, mask_num, seed, var_types):
     mask_indices = []
     num_rows, num_cols = X_masked.shape
     num_cols_type = num_cols // 3
-    np.random.seed(seed)
+    rng = np.random.default_rng(seed)
     for _type, _index in var_types.items():
         for i, row in enumerate(X_masked):
             if len(_index)>0:
-                rand_idx = np.random.choice(_index, mask_num, False)
+                rand_idx = rng.choice(_index, mask_num, False)
                 row[rand_idx] = np.nan
 
     return X_masked

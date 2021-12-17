@@ -254,7 +254,7 @@ class GaussianCopula():
                 self.set_indices(np.asarray(kwargs['X_true']))
             else:
                 self.set_indices(X)
-            kwargs_online = {name:kwargs[name] for name in ['n_train', 'X_true'] if name in kwargs}
+            kwargs_online = {name:kwargs[name] for name in ['n_train', 'X_true', 'decay'] if name in kwargs}
             return self.fit_transform_online(X, **kwargs_online)
         else:
             X = self._preprocess_data(X)
@@ -473,7 +473,7 @@ class GaussianCopula():
     #### online functions 
     ################################################
 
-    def fit_transform_online(self, X, n_train=0, X_true=None):
+    def fit_transform_online(self, X, n_train=0, X_true=None, decay=None):
         '''
         Implement fit_transform when the training mode is 'minibatch-online'
         '''
@@ -481,6 +481,7 @@ class GaussianCopula():
         self.transform_function = OnlineTransformFunction(self._cont_indices, 
                                                           self._ord_indices, 
                                                           window_size=self._window_size, 
+                                                          decay = decay, 
                                                           cdf_types=cdf_types,
                                                           inverse_cdf_types=inverse_cdf_types
                                                          )
