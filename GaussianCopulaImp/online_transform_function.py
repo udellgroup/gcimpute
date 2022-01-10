@@ -24,9 +24,23 @@ class OnlineTransformFunction(TransformFunction):
         #self.update_pos = np.zeros(p, dtype=np.int64)
 
         if decay is not None:
-            self.decay_weights = np.array([np.power(decay, i) for i in range(window_size-1, -1, -1)])
-            self.decay_weights = np.round(self.decay_weights, 5)
-            self.decay_weights /= self.decay_weights.sum()
+            if ininstance(decay, float):
+                self.decay_weights = np.array([np.power(decay, i) for i in range(window_size-1, -1, -1)])
+                self.decay_weights = np.round(self.decay_weights, 5)
+                self.decay_weights /= self.decay_weights.sum()
+            else:
+                try:
+                    decay = np.array(decay, dtype=np.float64)
+                except ValueError:
+                    print('Weights must be array-like and have float entries')
+                    raise
+                if len(decay) != window_size:
+                    print('Weights must have length as window_size')
+                    raise
+                if decay.min() <= 0 or decay.max() >= 1:
+                    print('Weights must be between 0 and 1')
+                    raise
+                self.decay_weights = decay / decay.sum()
         else:
             self.decay_weights = None
 

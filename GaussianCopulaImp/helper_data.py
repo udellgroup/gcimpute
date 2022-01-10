@@ -131,13 +131,22 @@ def generate_mixed_from_gc(sigma=None, n=2000, seed=1,
         X[:,ind] = cont_to_ord(X[:,ind], k=2, by=cutoff_by, random_generator=rng, qmin=qmin, qmax=qmax)
     return X
 
-def load_GSS(cols = 'tutorial', to_array = False):
+def load_GSS(cols = 'tutorial', to_array = False, flipping = True):
     '''
     Return a subset of General social survey (GSS) datasets selected in year 2014, consisting of 18 variables and 2538 subjects.
     '''
     stream = pkg_resources.resource_stream(__name__, 'data/GSS_2014_18var.csv')
     data = pd.read_csv(stream, index_col=0)
     data.rename(columns={'CLASS_':'CLASS'}, inplace=True)
+    # flip integer codes in some variables so that higher integers always mean higher 'degree'
+    # for example, originally small values of STRESS mean more severe STRESS. We flip the integer values so that
+    # large values of STRESS mean more severe STRESS
+    if flipping:
+        flipping_set = ['STRESS', 'SLPPRBLM', 'WKSMOOTH', 'UNEMP', 'SATFIN', 'SATJOB', 'LIFE', 'HEALTH', 'HAPPY', 'SOCBAR']
+        for col in flipping_set:
+            _col = data[col]
+            data[col] = -_col + _col.max() + _col.min()
+
     _cols = data.columns.tolist()
     if isinstance(cols, str):
         if cols == 'tutorial':

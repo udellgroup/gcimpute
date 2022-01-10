@@ -9,7 +9,7 @@ from scipy.linalg import svdvals
 from collections import defaultdict
 import warnings
 
-var_type_names = ['ordinal', 'lower_truncated', 'upper_truncated', 'twosided_truncated', 'poisson']
+var_type_names = ['continuous', 'ordinal', 'lower_truncated', 'upper_truncated', 'twosided_truncated']
 
 class GaussianCopula():
     '''
@@ -53,7 +53,7 @@ class GaussianCopula():
 
     '''
 
-    def __init__(self, training_mode='standard', stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, batch_size=100, window_size=200, realtime_marginal=False, min_ord_ratio=0.1, tol=0.01, likelihood_min_increase=0, max_iter=50, num_pass=2, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, corr_diff_type=['F'], use_truncation_var=True):
+    def __init__(self, training_mode='standard', stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, batch_size=100, window_size=200, decay=None, realtime_marginal=True, min_ord_ratio=0.1, tol=0.01, likelihood_min_increase=0, max_iter=50, num_pass=2, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, corr_diff_type=['F'], use_truncation_var=True):
         '''
         Parameters:
             training_mode: {'standard', 'minibatch-offline', 'minibatch-online'}, default='standard'
@@ -131,6 +131,7 @@ class GaussianCopula():
         self._batch_size = batch_size
         self._window_size = window_size
         self._realtime_marginal = realtime_marginal
+        self._decay = decay
         self._corr_diff_type = corr_diff_type
 
         # self._cont_indices and self._ord_indices store boolean indexing
@@ -172,11 +173,11 @@ class GaussianCopula():
     ################################################
 
     def fit(self, X, 
+            continuous = None,
             ordinal = None, 
             lower_truncated= None, 
             upper_truncated = None, 
-            twosided_truncated = None, 
-            poisson = None,
+            twosided_truncated = None,
             **kwargs):
         '''
         Fits the Gaussian copula imputer on the input data X.
@@ -188,11 +189,11 @@ class GaussianCopula():
             kwargs:
                 additional keyword arguments for fit_offline
         '''
-        self.store_var_type(ordinal = ordinal, 
+        self.store_var_type(continuous = continuous,
+                            ordinal = ordinal, 
                             lower_truncated = lower_truncated,
                             upper_truncated = upper_truncated,
-                            twosided_truncated = twosided_truncated,
-                            poisson = poisson
+                            twosided_truncated = twosided_truncated
                            )
 
         if self._training_mode == 'minibatch-online':
@@ -218,11 +219,11 @@ class GaussianCopula():
         return X_imp
 
     def fit_transform(self, X, 
+                      continuous = None,
                       ordinal = None, 
                       lower_truncated= None, 
                       upper_truncated = None, 
-                      twosided_truncated = None, 
-                      poisson = None,
+                      twosided_truncated = None,
                       **kwargs
                      ):
         '''
@@ -240,11 +241,11 @@ class GaussianCopula():
             Ximp: array-like of shape (n_samples, n_features)
                 The imputed input data
         '''
-        self.store_var_type(ordinal = ordinal, 
+        self.store_var_type(continuous = continuous, 
+                            ordinal = ordinal, 
                             lower_truncated = lower_truncated,
                             upper_truncated = upper_truncated,
-                            twosided_truncated = twosided_truncated,
-                            poisson = poisson
+                            twosided_truncated = twosided_truncated
                            )
         
 
@@ -254,7 +255,7 @@ class GaussianCopula():
                 self.set_indices(np.asarray(kwargs['X_true']))
             else:
                 self.set_indices(X)
-            kwargs_online = {name:kwargs[name] for name in ['n_train', 'X_true', 'decay'] if name in kwargs}
+            kwargs_online = {name:kwargs[name] for name in ['n_train', 'X_true'] if name in kwargs}
             return self.fit_transform_online(X, **kwargs_online)
         else:
             X = self._preprocess_data(X)
@@ -473,15 +474,17 @@ class GaussianCopula():
     #### online functions 
     ################################################
 
-    def fit_transform_online(self, X, n_train=0, X_true=None, decay=None):
+    def fit_transform_online(self, X, X_true=None, n_train=0):
         '''
         Implement fit_transform when the training mode is 'minibatch-online'
         '''
+        if X_true is not None:
+            X_true = np.array(X_true)
         cdf_types, inverse_cdf_types = self.get_cdf_estimation_type(p = X.shape[1])
         self.transform_function = OnlineTransformFunction(self._cont_indices, 
                                                           self._ord_indices, 
                                                           window_size=self._window_size, 
-                                                          decay = decay, 
+                                                          decay = self._decay, 
                                                           cdf_types=cdf_types,
                                                           inverse_cdf_types=inverse_cdf_types
                                                          )
@@ -1055,6 +1058,7 @@ class GaussianCopula():
         for name in ['lower_truncated', 'upper_truncated', 'twosided_truncated']:
             if name in self.var_type_dict:
                 truncation = True
+                break
         return truncation
 
     def get_cdf_estimation_type(self, p):
@@ -1064,8 +1068,9 @@ class GaussianCopula():
         cdf_types = np.array(['empirical'] * p, dtype = 'U20')
         inverse_cdf_types = np.array(['empirical'] * p, dtype = 'U20')
         for name, values in self.var_type_dict.items():
-            cdf_types[values] = name
-            inverse_cdf_types[values] = name
+            if name in ['lower_truncated', 'upper_truncated', 'twosided_truncated']:
+                cdf_types[values] = name
+                inverse_cdf_types[values] = name
         return cdf_types, inverse_cdf_types
         
     def set_indices(self, X):
@@ -1074,43 +1079,55 @@ class GaussianCopula():
         '''
         p = X.shape[1]
         # boolean indexing
-        var_type_dict = self.get_vartype_indices(X)
-        self._ord_indices = var_type_dict['ordinal']
-        self._cont_indices = ~self._ord_indices
+        var_type = self.get_vartype_indices(X)
+        # if there are pre-fixed variable types, modify var_type_list to be consistent
+        _merged_var = var_type.copy()
+        for name, values in self.var_type_dict.items():
+            _merged_var[values] = name
+        _diff = _merged_var != var_type
+        if any(_diff):
+            if self._verbose > 1:
+                print('Caution: the user specified variable types differ from the models automatic decision')
+                loc = np.flatnonzero(_diff)
+                print(f'Conflicts at {loc}: user decision {_merged_var[loc]}, model decision {var_type[loc]}')
+        var_type = _merged_var
+
+        # indexing differenting continuous and non-continuous
+        self._cont_indices = var_type == 'continuous'
+        self._ord_indices = ~self._cont_indices
         # integer based indexing
         self.cont_indices = np.flatnonzero(self._cont_indices)
         self.ord_indices = np.flatnonzero(self._ord_indices)
 
         # set 
-        for _type in ['lower_truncated', 'upper_truncated', 'twosided_truncated']:
-            _indices = var_type_dict[_type]
-            if any(_indices):
-                self.var_type_dict[_type] = np.flatnonzero(_indices)
+        var_type_dict = defaultdict(list)
+        for i,x in enumerate(var_type):
+            var_type_dict[x].append(i)
+
+        for key,value in self.var_type_dict.items():
+            if key not in var_type_dict:
+                raise
+            new_value = var_type_dict[key]
+            if not set(value).issubset(set(new_value)):
+                print(key, set(value), set(new_value))
+                raise
+
+        self.var_type_dict = var_type_dict
 
     def get_vartypes(self, feature_names=None):
         '''
         Return the variable types used during the model fitting. Each variable is one of the following:
             'continuous', 'ordinal', 'lower_truncated', 'upper_truncated', 'twosided_truncated'
         '''
+        _var_types = self.var_type_dict.copy()
         if feature_names is not None:
             names = list(feature_names)
-        else:
-            names = list(range(len(self._cont_indices))) if self.features_names is None else self.features_names
-        _var_types = {_name:[] for _name in ['continuous', 'ordinal', 'lower_truncated', 'upper_truncated', 'twosided_truncated']}
-        for i, key in enumerate(names):
-            if self._cont_indices[i]:
-                _var_types['continuous'].append(key)
-            else:
-                _var_types['ordinal'].append(key)
-        for _type in ['lower_truncated', 'upper_truncated', 'twosided_truncated']:
-            if _type in self.var_type_dict:
-                for index in self.var_type_dict[_type]:
-                    key = names[index]
-                    _var_types['ordinal'].remove(key)
-                    _var_types[_type].append(key)
+            for key,value in _var_types.items():
+                _var_types[key] = [names[i] for i in value]
+        for name in var_type_names:
+            if name not in _var_types:
+                _var_types[name] = []
         return _var_types
-
-
 
     def get_vartype_indices(self, X):
         """
@@ -1158,24 +1175,44 @@ class GaussianCopula():
 
             return is_ord, is_lower_truncated, is_upper_truncated, is_twoside_truncated
 
+        def which_type(is_ord, is_lower_truncated, is_upper_truncated, is_twoside_truncated):
+            if is_ord:
+                if is_lower_truncated:
+                    t = 'lower_truncated'
+                elif is_upper_truncated:
+                    t = 'upper_truncated'
+                elif is_twoside_truncated:
+                    t = 'twosided_truncated'
+                else:
+                    t = 'ordinal'
+            else:
+                t = 'continuous'
+            return t
+
+
         ord_indices = []
         lower_truncated_indices = []
         upper_truncated_indices = []
         twoside_truncated_indices = []
 
-        for col in X.T:
-            is_ord, is_lower_truncated, is_upper_truncated, is_twoside_truncated = is_special_type(col)
-            ord_indices.append(is_ord)
-            twoside_truncated_indices.append(is_twoside_truncated)
-            lower_truncated_indices.append(is_lower_truncated)
-            upper_truncated_indices.append(is_upper_truncated)
+        var_type_list = []
 
-        var_type_dict = {'ordinal': np.array(ord_indices),
-                        'lower_truncated': np.array(lower_truncated_indices),
-                        'upper_truncated': np.array(upper_truncated_indices),
-                        'twosided_truncated': np.array(twoside_truncated_indices)
-                        }
-        return var_type_dict
+        for i, col in enumerate(X.T):
+            is_ord, is_lower_truncated, is_upper_truncated, is_twoside_truncated = is_special_type(col)
+            #ord_indices.append(is_ord)
+            #twoside_truncated_indices.append(is_twoside_truncated)
+            #lower_truncated_indices.append(is_lower_truncated)
+            #upper_truncated_indices.append(is_upper_truncated)
+            var_type_list.append(which_type(is_ord, is_lower_truncated, is_upper_truncated, is_twoside_truncated))
+
+        #var_type_dict = {'ordinal': np.array(ord_indices),
+        #                'lower_truncated': np.array(lower_truncated_indices),
+        #                'upper_truncated': np.array(upper_truncated_indices),
+        #                'twosided_truncated': np.array(twoside_truncated_indices)
+        #                }
+
+        var_type_list = np.array(var_type_list, dtype = 'U20')
+        return var_type_list
 
     def _update_loglikelihood(self, iterloglik):
         converged = False
