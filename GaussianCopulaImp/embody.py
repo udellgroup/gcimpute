@@ -250,23 +250,35 @@ def _LRGC_em_row_step_body(Z, r_lower, r_upper, U, d, sigma, num_ord_updates, or
 
 
 def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num_ord_updates, ord_indices):
+    '''
+    Computation complexity: |O_i|k^2 + k^3
+    '''
     p, rank = U.shape
     missing_indices = np.isnan(Z_row)
     obs_indices = ~missing_indices
     ord_obs_indices = ord_indices & obs_indices
     
+    # Ui_obs: |O_i| * k
     Ui_obs = U[obs_indices,:]
+    # (1) matrix multiplication, |O_i|k^2 
+    # UU_obs: k by k
     UU_obs = np.dot(Ui_obs.T, Ui_obs) 
 
     # used in both ordinal and factor block
+    # (2) linear system, k^3+|O_i|k^2 
     res = np.linalg.solve(UU_obs + sigma * np.diag(1.0/np.square(d)), np.concatenate((np.identity(rank), Ui_obs.T),axis=1))
+    # Ai: k by k
     Ai = res[:,:rank]
+    # AU: k by |O_i|
     AU = res[:,rank:]
 
+    # (3) Each execution: k|O_i|
     sigma_obs_obs_inv_Zobs_row_func = lambda z_obs, U_obs=Ui_obs, AU=AU, sigma=sigma: (z_obs - np.dot(U_obs, np.dot(AU, z_obs)))/sigma
+    # (4) |O_i|*k^2
     sigma_obs_obs_inv_diag = (1 - np.einsum('ij, jk, ki -> i', Ui_obs, Ai, Ui_obs.T))/sigma
 
     zi_obs = Z_row[obs_indices]
+    # (5) p_ord + k|O_i|
     Z_row, var_ordinal, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
                                                            r_lower_row=r_lower_row, 
                                                            r_upper_row=r_upper_row, 
@@ -280,6 +292,7 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
                                                            )
     
     zi_obs = Z_row[obs_indices] 
+    # (6) k|O_i| + k^2|O_i| + k^2 = k^2|O_i|
     si = np.dot(AU, zi_obs)
     ssi = np.dot(AU * var_ordinal[obs_indices], AU.T) + np.outer(si, si.T)
 
@@ -334,6 +347,9 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
                       obs_indices, ord_obs_indices, ord_in_obs, obs_in_ord):
     '''
     For a row, modify the conditional mean and compute the conditional var at ordinal entries.
+    Computation complexity: num_ord_updates * (M1 + p_ord * M2), 
+    where M1 denotes the computation of executing sigma_obs_obs_inv_Zobs_row_func once, 
+    and M2 denotes the computation of evaluating a truncated normal stats
 
     Args:
         sigma_obs_obs_inv_Zobs_row_func: A function that takes z_obs (array like of shape (n_obs, )) as input and return sigma_obs_obs_inv_Zobs_row (array like of shape (n_obs, ))  as output
