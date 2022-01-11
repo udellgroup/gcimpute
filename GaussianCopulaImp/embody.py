@@ -391,8 +391,9 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
                 a_ij = (r_lower_row[j_in_ord] - new_mean_ij) / new_std_ij
                 b_ij = (r_upper_row[j_in_ord] - new_mean_ij) / new_std_ij
                 try:
-                    _mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
-                    if np.isfinite(_var):
+                    #_mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
+                    _mean, _var = get_truncnorm_moments(alpha = a_ij, beta = b_ij, mu = new_mean_ij, sigma = new_std_ij)
+                    if np.isfinite(_var) and _var>0:
                         var_ordinal[j] = _var
                     if np.isfinite(_mean):
                         z_row[j] = _mean
@@ -400,4 +401,20 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
                     #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
                     truncnorm_warn = True
     return z_row, var_ordinal, truncnorm_warn
+
+def get_truncnorm_moments(alpha,beta,mu,sigma,tol=0.001):
+    Z = norm.cdf(beta) - norm.cdf(alpha)
+    if Z < tol:
+        return np.inf, np.inf
+    pdf_beta, pdf_alpha = norm.pdf(beta), norm.pdf(alpha)
+    r1 = (pdf_beta - pdf_alpha) / Z
+    _mean = mu - r1 * sigma
+    if beta >= np.inf:
+        r2 = (-alpha * pdf_alpha) / Z
+    elif alpha <= -np.inf:
+        r2 = (beta * pdf_beta) / Z
+    else:
+        r2 = (beta * pdf_beta - alpha * pdf_alpha) / Z
+    _var = (sigma**2) * (1 - r2 - (r1**2)) 
+    return _mean, _var
 
