@@ -166,8 +166,8 @@ def load_GSS(cols = 'tutorial', to_array = False, flipping = True):
     return np.array(data) if to_array else data
 
 def load_movielens1m(num = 150, min_obs = 2, verbose = False):
-    assert num <= 207
-    stream = pkg_resources.resource_stream(__name__, 'data/movielens1m_1kratings_top207.csv')
+    assert num <= 501
+    stream = pkg_resources.resource_stream(__name__, 'data/movielens1m_top501.csv')
     data = pd.read_csv(stream, index_col=0).to_numpy()
     # select columns
     thre = np.sort(np.isnan(data).mean(axis=0))[num-1]

@@ -402,16 +402,21 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
                     truncnorm_warn = True
     return z_row, var_ordinal, truncnorm_warn
 
-def get_truncnorm_moments(alpha,beta,mu,sigma,tol=0.001):
+def get_truncnorm_moments(alpha,beta,mu,sigma,tol=1e-4):
     Z = norm.cdf(beta) - norm.cdf(alpha)
+    assert np.isfinite(Z), f'Z is {Z}'
     if Z < tol:
         return np.inf, np.inf
     pdf_beta, pdf_alpha = norm.pdf(beta), norm.pdf(alpha)
+    assert np.isfinite(pdf_alpha), f'pdf_alpha is {pdf_alpha}'
+    assert np.isfinite(pdf_beta), f'pdf_beta is {pdf_beta}'
     r1 = (pdf_beta - pdf_alpha) / Z
     _mean = mu - r1 * sigma
     if beta >= np.inf:
+        assert np.isfinite(alpha), f'alpha is {alpha} when beta is inf'
         r2 = (-alpha * pdf_alpha) / Z
     elif alpha <= -np.inf:
+        assert np.isfinite(beta), f'beta is {beta} when alpha is -inf'
         r2 = (beta * pdf_beta) / Z
     else:
         r2 = (beta * pdf_beta - alpha * pdf_alpha) / Z

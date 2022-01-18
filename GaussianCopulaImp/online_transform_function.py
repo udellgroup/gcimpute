@@ -24,7 +24,7 @@ class OnlineTransformFunction(TransformFunction):
         #self.update_pos = np.zeros(p, dtype=np.int64)
 
         if decay is not None:
-            if ininstance(decay, float):
+            if isinstance(decay, float):
                 self.decay_weights = np.array([np.power(decay, i) for i in range(window_size-1, -1, -1)])
                 self.decay_weights = np.round(self.decay_weights, 5)
                 self.decay_weights /= self.decay_weights.sum()

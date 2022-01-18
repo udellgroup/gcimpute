@@ -18,21 +18,68 @@ class GaussianCopula():
     and impute the missing entries using the learned model.
 
 
+    Parameters
+    ----------
+    training_mode: {'standard', 'minibatch-offline', 'minibatch-online'}, default='standard'
+        String describing the type of training to use. Must be one of:
+        'standard'
+            all data are used to estimate the marginals and update the model in each iteration
+        'minibatch-offline'
+            all data are used to estimate the marginals, but only a mini-batch's data are used to update the model in each iteration
+        'minibatch-online'
+            only recent data are used to estimate the marginals, and only a mini-batch's data are used to update the model in each iteration
+    tol: float, default=0.01
+        The convergence threshold. EM iterations will stop when the parameter update ratio is below this threshold.
+    max_iter: int, default=50
+        The number of EM iterations to perform.
+    random_state: int, default=101
+        Controls the randomness in generating latent ordinal values. Not used if there is no ordinal variable.
+    n_jobs: int, default=1
+        The number of jobs to run in parallel.
+    verbose: int, default=0
+        Controls the verbosity when fitting and predicting. 
+    num_ord_updates: int, default=1
+        Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
+        We do not recommend using value larger than 1 (the default value) at this moment. It will slow the speed without clear 
+        performance improvement.
+    min_ord_ratio: float, default=0.1
+        Used for automatic variable type decision. The largest mode frequency for continuous variables.
+    stepsize_func: a function that takes 1-dim input and return 1-dim output
+        Only used when (1) training_mode = 'minibatch-offline'; (2) training_mode = 'minibatch-online' and 'const_stepsize=None'.
+        The supplied function should outputs monotonically decreasing values in the range (0,1) on positive integers
+    const_stepsize: float in the range (0,1) or None, default is 0.5.
+        Only used when training_mode = 'minibatch-online'. 
+    num_pass: int or None, default = 2
+        Only used when training_mode='minibatch-offline'. Used to set max_iter.
+    batch_size: int, default=100
+        The number of data points in each mini-batch. 
+    window_size: int, default=200
+        The lookback window length for online marginal estimate. Only used when training_mode = 'minibatch-online'.  
+    decay: int or None, default=None
+        The decay rate to be allocated to observations for online imputation. Only used when training_mode = 'minibatch-online'.  
+    realtime_marginal: bool, default=True
+        Only used when training_mode = 'minibatch-online'. 
+        If set to True, the marginal updates after every row; otherwise, the marginal updates after every batch_size rows.
+        In comparison, correlation update is conducted after every batch_size rows.
+        The model runs longer but gives more accurate estimation when set to True.
+    corr_diff_type: A list with elements from {'F', 'S', 'N'}, default = ['F']
+        The matrix norm used to compute copula correlation update ratio. Used for detecting change points when training mode = 'minibatch-online'. 
+        Must be one of:
+        'F'
+            Frobenius norm
+        'S'
+            Spectral norm
+        'N'
+            Nuclear norm
+
     Attributes
     ----------
-    cont_indices: ndarray 
-        Set of continuous variable indices.
-    ord_indices: ndarray
-        Set of ordinal variable indices. The complement set of cont_indices.
     n_iter_: int
-        Number of iteration rounds that occurred. Will be less than self._max_iter if early stopping criterion was reached.
-    likelihood: list of length n_iter_
-        The computed pseudo likelihood value at each iteration.
-    feature_names: ndarray of shape n_features
-        Names of features seen during fit. Defined only when X has feature names that are all strings.
-    corr_diff: list of length 0 or n_iter_
-        The changing tracking statistics of the copula correlation matrix if training_mode is 'minibatch-online',
-        and an empty list otherwise.
+        The number of EM iterations conducted.
+    likelihood: ndarray of shape (n_iter_,)
+        The model likelihood value at each iteration.
+    feature_names: ndarray of shape (n_features,)
+        Number of features seen during `fit`.
 
     Methods
     -------
@@ -42,66 +89,24 @@ class GaussianCopula():
         Return the imputed X using the stored model.
     fit_transform(X)
         Fit a Gaussian copula model on X and return the transformed X.
+    fit_transform_evaluate(X, eval_func)
+        Conduct eval_func on the imputed datasets returned after each iteration.
     sample_imputation(X)
         Return multiple imputed datasets X using the stored model.
     get_params()
         Get parameters for this estimator.
-    get_imputed_confidence_interval(alpha=0.95)
+    get_vartypes()
+        Get the specified variable types used in model fitting.
+    get_imputed_confidence_interval()
         Get the confidence intervals for the imputed missing entries.
-    get_reliability(Ximp=None, alpha=0.95)
+    get_reliability()
         Get the reliability, a relative quantity across all imputed entries, when either all variables are continuous or all variables are ordinal 
+    fit_change_point_test()
+        Conduct change point test after receiving each data batch.
 
     '''
 
-    def __init__(self, training_mode='standard', stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, batch_size=100, window_size=200, decay=None, realtime_marginal=True, min_ord_ratio=0.1, tol=0.01, likelihood_min_increase=0, max_iter=50, num_pass=2, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, corr_diff_type=['F'], use_truncation_var=True):
-        '''
-        Parameters:
-            training_mode: {'standard', 'minibatch-offline', 'minibatch-online'}, default='standard'
-                String describing the type of training to use. Must be one of:
-                'standard'
-                    all data are used to estimate the marginals and update the model in each iteration
-                'minibatch-offline'
-                    all data are used to estimate the marginals, but only a mini-batch's data are used to update the model in each iteration
-                'minibatch-online'
-                    only recent data are used to estimate the marginals, and only a mini-batch's data are used to update the model in each iteration
-            stepsize_func: a function that outputs monotonically decreasing values in the range (0,1) on positive integers
-                Only used when (1) training_mode = 'minibatch-offline'; (2) training_mode = 'minibatch-online' and 'const_stepsize=None'.
-            const_stepsize: float in the range (0,1) or None, default is 0.5.
-                Only used when training_mode = 'minibatch-online'. 
-            batch_size: int, default=100
-                The number of data points in each mini-batch. Only used for offline mini-batch training.
-            window_size: int, default=200
-                The lookback window length for online marginal estimate. Only used when training_mode = 'minibatch-online'.  
-            min_ord_ratio: float, default=0.1
-                When cont_indices is None when the calling fit, variables whose mode occurence ratio is smaller than min_ord_ratio are regarded as continuous variables.
-            tol: float, default=0.001
-                The convergence threshold. EM iterations will stop when the parameter update ratio is below this threshold.
-            likelihood_min_increase: float, default=0.01
-                The minimal likelihood increase ratio required to keep running the EM algorithm.
-            max_iter: int, default=30
-                The number of EM iterations to perform.
-            num_pass: int or None, default=2
-                Only used when training_mode='minibatch-offline'. Used to set max_iter.
-            random_state: int, default=101
-                Controls the randomness in generating latent ordinal values. Not used if there is no ordinal variable.
-            n_jobs: int, default=1
-                The number of jobs to run in parallel.
-            verbose: int, default=0
-                Controls the verbosity when fitting and predicting. 
-            num_ord_updates: int, default=1
-                Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
-                We do not recommend using value larger than 1 (the default value) at this moment. It will slow the speed without clear 
-                performance improvement.
-            corr_diff_type: A list with elements from {'F', 'S', 'N'}, default = ['F']
-                The matrix norm used to compute copula correlation update ratio. Used for detecting change points when training mode = 'minibatch-online'. 
-                Must be one of:
-                'F'
-                    Frobenius norm
-                'S'
-                    Spectral norm
-                'N'
-                    Nuclear norm
-        '''
+    def __init__(self, training_mode='standard', tol=0.01, max_iter=50, random_state=101, n_jobs=1, verbose=0, num_ord_updates=1, min_ord_ratio=0.1, stepsize_func=lambda k, c=5:c/(k+c), const_stepsize=0.5, num_pass=2, batch_size=100, window_size=200, decay=None, realtime_marginal=True, corr_diff_type=['F']):
         def check_stepsize():
             L = np.array([stepsize_func(x) for x in range(1, max_iter+1, 1)])
             if L.min() <=0 or L.max()>=1:
@@ -135,21 +140,19 @@ class GaussianCopula():
         self._corr_diff_type = corr_diff_type
 
         # self._cont_indices and self._ord_indices store boolean indexing
-        # self.cont_indices and self.ord_indices store integer indexing
         self._cont_indices = None
-        self._ord_indices = None 
+        self._ord_indices = None
+        # self.cont_indices and self.ord_indices store integer indexing 
         self.cont_indices = None
         self.ord_indices = None 
         self._min_ord_ratio = min_ord_ratio
         self.var_type_dict = {}
-        self.use_truncation_var = use_truncation_var
 
         self._seed = random_state
         self._rng = np.random.default_rng(self._seed)
         self._sample_seed = self._seed
 
         self._threshold = tol
-        self._likel_threshold = likelihood_min_increase
         self._max_iter = max_iter
         self._max_workers = n_jobs
         self._verbose = verbose
@@ -164,8 +167,8 @@ class GaussianCopula():
         # attributes
         self.n_iter_ = 0
         self.likelihood = []
-        self.corrupdate = []
         self.features_names = None
+        self.corrupdate = []
         self.corr_diff = defaultdict(list)
 
     ################################################
@@ -182,12 +185,21 @@ class GaussianCopula():
         '''
         Fits the Gaussian copula imputer on the input data X.
 
-        Parameters:
+        Parameters
+        ----------
             X: array-like of shape (n_samples, n_features)
                 Input data
-            ordinal, lower_truncated, upper_truncated, twosided_truncated, poisson: list of the corresponding variable type indices
+            continous, ordinal, lower_truncated, upper_truncated, twosided_truncated, poisson: list of integers
+                list of the corresponding variable type indices
             kwargs:
-                additional keyword arguments for fit_offline
+                additional keyword arguments for fit_offline:
+                    first_fit: bool, default=True
+                        If true, initialize the copula correlation matrix
+                    max_iter: int or None. 
+                        The used maximum number of iterations is self._max_iter if max_iter is None else max_iter
+                    convergence_verbose: bool, default = True
+                        Output convergence information if True
+
         '''
         self.store_var_type(continuous = continuous,
                             ordinal = ordinal, 
@@ -200,13 +212,23 @@ class GaussianCopula():
             print('fit method is not implemented for minibatch-online mode, since the fitting and imputation are done in the unit of mini-batch. To impute the missing entries, call fit_transform.')
             raise
         else:
-            
-            return self.fit_offline(X, **kwargs)
+            self.fit_offline(X, **kwargs)
 
     def transform(self, X=None, num_ord_updates=2):
         '''
         Impute the missing entries in X using currently fitted model (accessed through self._corr). 
-        If X is None, set X as the data used to fit the model.
+
+        Parameters
+        ----------
+            X: array-like of shape (n_samples, n_features) or None
+                Data to be imputed. If None, set X as the data used to fit the model.
+            num_ord_updates: int, default=2
+                Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
+
+        Returns
+        -------
+            X_imp: array-like of shape (n_samples, n_features) 
+                Tne imputed complete dataset
         '''
         # get Z
         if X is None:
@@ -231,15 +253,27 @@ class GaussianCopula():
         For 'minibatch-online' mode, the variable types are set in this function call since the fit and transformation are done in an alternative fashion.
         For the other two modes, the variable types are set in the function fit_offline.
 
-        Parameters:
-            X: array-like of shape (n_samples, n_features)
+        Parameters
+        ----------
+            X: array-like of shape (n_samples, n_features) 
                 Input data
-            cont_indices: array-list of int, optional (default=None)
-                If not None, the set of continuout variable indices. 
-                If None, the continuout variable indices will be determined by self.min_ord_ratio.
-        Returns:
-            Ximp: array-like of shape (n_samples, n_features)
-                The imputed input data
+            continous, ordinal, lower_truncated, upper_truncated, twosided_truncated, poisson: list of integers
+                list of the corresponding variable type indices
+            kwargs:
+                additional keyword arguments for fit_transform_online and fit_offline
+                Keyword arguments of fit_transform_online:
+                    X_true: array-like of shape (n_samples, n_features) or None
+                        If not None, it indicates that some (could be all) of the missing entries of X_batch are revealed,
+                        and stored in X_true, after the imputation of X_batch. Those observation entries will be used to 
+                        update the model. 
+                    n_trian: int, default=0
+                        The number of rows to be used to initialize the model estimation.
+                        Use self._batch_size if n_train is 0
+                For keyword arguments of fit_offline, see Parameters of fit()
+        Returns
+        -------
+            X_imp: array-like of shape (n_samples, n_features) 
+                Tne imputed complete dataset
         '''
         self.store_var_type(continuous = continuous, 
                             ordinal = ordinal, 
@@ -256,15 +290,36 @@ class GaussianCopula():
             else:
                 self.set_indices(X)
             kwargs_online = {name:kwargs[name] for name in ['n_train', 'X_true'] if name in kwargs}
-            return self.fit_transform_online(X, **kwargs_online)
+            X_imp = self.fit_transform_online(X, **kwargs_online)
         else:
             X = self._preprocess_data(X)
             kwargs_offline = {name:kwargs[name] for name in ['first_fit', 'max_iter', 'convergence_verbose'] if name in kwargs}
-            return self.fit_transform_offline(X, **kwargs_offline)
+            X_imp = self.fit_transform_offline(X, **kwargs_offline)
+        return X_imp
 
     def fit_transform_evaluate(self, X, eval_func=None, num_iter=30, return_Ximp=False, **kwargs):
         '''
         Run the algorithm for num_iter iterations and evaluate the returned imputed sample at each iteration.
+
+        Parameters
+        ----------
+            X: array-like of shape (n_samples, n_features) 
+                Data to be imputed. 
+            eval_func: function that takes array-like of shape (n_samples, n_features) input
+                If not None, apply eval_func to the imputed dataset after each iteration and return the results. 
+            num_iter: int, default = 30
+                The number of iterations to run.
+            return_Ximp: bool, default = False
+                If True, return the imputed datasets after each iteration.
+            kwargs:
+                additional keyword arguments for fit_transform_online and fit_offline
+                See Parameters of fit_transform()
+
+        Returns
+        -------
+            out: dict 
+                'X_imp': the imputed datasets 
+                'evluation': the desired evaluation on imputed datasets
         '''
         out = defaultdict(list)
         # first fit
@@ -289,20 +344,66 @@ class GaussianCopula():
         Get parameters for this estimator.
 
         Returns:
-            params: dict
+            params: dict 
         '''
         params = {'copula_corr': self._corr.copy()}
         return params
 
-    def get_imputed_confidence_interval(self, X=None, alpha = 0.95, num_ord_updates=1, type='analytical', num=200):
+    def get_vartypes(self, feature_names=None):
+        '''
+        Return the variable types used during the model fitting. Each variable is one of the following:
+            'continuous', 'ordinal', 'lower_truncated', 'upper_truncated', 'twosided_truncated'
+
+        Parameters
+        ----------
+            feature_names: list of str or None
+                If not None, feature_names will be used to name variables
+
+        Returns
+        -------
+            _var_types: dict
+                Keys: 'continuous', 'ordinal', 'lower_truncated', 'upper_truncated', 'twosided_truncated'
+        '''
+        _var_types = self.var_type_dict.copy()
+        if feature_names is not None:
+            names = list(feature_names)
+            for key,value in _var_types.items():
+                _var_types[key] = [names[i] for i in value]
+        for name in var_type_names:
+            if name not in _var_types:
+                _var_types[name] = []
+        return _var_types
+
+    def get_imputed_confidence_interval(self, X=None, alpha = 0.95, num_ord_updates=2, type='analytical', **kwargs):
         '''
         Compute the confidence interval for each imputed entry.
+
+        Parameters
+        ----------
+            X: array-like of shape (n_samples, n_features) or None
+                Data to be imputed. If None, set X as the data used to fit the model.
+            alpha: float in (0,1), default = 0.95
+                The desired significance level.
+            num_ord_updates: int, default = 2
+                Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
+            type: {'anlaytical', 'quantile'}, default ='analytical'.
+                'analytical': derive the analytical confidence interval
+                'qunatile': first do multiple imputation and then derive empirical quantile confidence intervals
+            kwargs:
+                additional keyword arguments for get_imputed_confidence_interval_quantiles
+        Returns
+        -------
+            out: dict with keys
+                'upper': array-like of shape (n_samples, n_features) 
+                    The upper bound of the confidence interval
+                'lower': array-like of shape (n_samples, n_features) 
+                    The lower bound of the confidence interval
         '''
         if self._training_mode == 'minibatch-online':
             raise NotImplementedError('Confidence interval has not yet been supported for minibatch-online mode')
 
         if type == 'quantile':
-            return self.get_imputed_confidence_interval_quantile(X=X, alpha=alpha, num_ord_updates=num_ord_updates, num=num)
+            return self.get_imputed_confidence_interval_quantile(X=X, alpha=alpha, num_ord_updates=num_ord_updates, **kwargs)
 
         if X is None:
             Zimp = self._latent_Zimp
@@ -326,48 +427,25 @@ class GaussianCopula():
         obs_loc = ~np.isnan(X)
         upper[obs_loc] = np.nan
         lower[obs_loc] = np.nan
-        return {'upper':upper, 'lower':lower}
-
-    def get_imputed_confidence_interval_quantile(self, X=None, alpha = 0.95, num_ord_updates=1, num=200):
-        '''
-        Construct quantile based confidence interval
-        '''
-        if X is None:
-            X =  self.transform_function.X
-        X_imp_num = self.sample_imputation(X = X, num = num, num_ord_updates = num_ord_updates)
-        q_lower, q_upper = (1-alpha)/2, 1-(1-alpha)/2
-        lower, upper = np.quantile(X_imp_num, [q_lower, q_upper], axis=2)
-        obs_loc = ~np.isnan(X)
-        upper[obs_loc] = np.nan
-        lower[obs_loc] = np.nan
-        return {'upper':upper, 'lower':lower}
-
-
-    def get_reliability(self, Ximp=None, alpha=0.95):
-        '''
-        Get the reliability of imputed entries. The notion of reliability is a relative quantity across all imputed entries.
-        Entries with higher reliability are more likely to have small imputation error. 
-        '''
-        if all(self._cont_indices):
-            return self.get_reliability_cont(Ximp, alpha)
-        elif all(self._ord_indices):
-            return self.get_reliability_ord()
-        else:
-            raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
+        out = {'upper':upper, 'lower':lower}
+        return out
 
 
     def sample_imputation(self, X=None, num=5, num_ord_updates=1):
         '''
         Sample multiple imputed datasets using the currently fitted method.
-        If X is None, set X as the data used to fit the model.
-        Args:
+
+        Parameters
+        ----------
             X: array of shape (n_samples, n_features) or None.
                 The dataset to be imputed. Use the seen data for model fitting if None.
-            num: int
+            num: int, default=5
                 The number of imputation samples to draw.
-            num_ord_updates: int
+            num_ord_updates: int, default=1
                 The number of iterations to perform for estimating latent mean at ordinals.
-        Return:
+
+        Return
+        ------
             X_imp_num: array of shape (n_samples, n_features, num)
                 Imputed dataset.
         '''
@@ -393,36 +471,201 @@ class GaussianCopula():
                 X_imp_num[...,i] = self._latent_to_imp(Z=Z_imp[...,0], X_to_impute=X)
         return X_imp_num
 
+    def get_reliability(self, Ximp=None, alpha=0.95):
+        '''
+        Get the reliability of imputed entries. The notion of reliability is a relative quantity across all imputed entries.
+        Entries with higher reliability are more likely to have small imputation error. 
 
-    def fit_change_point_test(self, X, cont_indices=None, nsamples=100, verbose=False):
+        Parameters
+        ----------
+            Ximp: array-like of shape (n_samples, n_features) or None
+                Only used for all continuous variables. 
+                The returned Gaussian copula imputed matrix.
+            alpha: float in (0,1), default = 0.95
+                The desired significance level.
+        Returns
+        -------
+           r: array-like of shape (n_samples, n_features)
+                Elementwise reliability
+        '''
+        if all(self._cont_indices):
+            r = self.get_reliability_cont(Ximp, alpha)
+        elif all(self._ord_indices):
+            r = self.get_reliability_ord()
+        else:
+            raise ValueError('Reliability computation is only available for either all continuous variables or all ordinal variables')
+        return r
+
+
+    def fit_change_point_test(self, X, X_true=None, n_train=0, nsamples=100, verbose=False):
+        '''
+        Conduct change point detection after receiving each data batch.
+
+        Parameters
+        ----------
+            X: array-like of shape (n_samples, n_features) 
+                Input data
+            X_true: array-like of shape (n_samples, n_features) or None
+                If not None, it indicates that some (could be all) of the missing entries of X_batch are revealed,
+                and stored in X_true, after the imputation of X_batch. Those observation entries will be used to 
+                update the model. 
+            n_trian: int, default=0
+                The number of rows to be used to initialize the model estimation.
+                Use self._batch_size if n_train is 0
+            n_samples: int, default=100
+                The number of samples to draw for the resampling test
+            verbose: bool, default=True
+                If True, print progress information
+
+        Returns
+        -------
+            out: dict with keys
+                pval: dict with list
+                    with keys as self._corr_diff_type, 
+                    and values as the corresponding empirical pvalues
+                statistics: dict with list
+                    with keys as self._corr_diff_type
+                    and values as the corresponding test statistics
+        '''
         assert self._training_mode == 'minibatch-online'
-        X = self._preprocess_data(X, cont_indices)
-        self.transform_function = OnlineTransformFunction(self._cont_indices, self._ord_indices, window_size=self._window_size)
+        if X_true is None:
+            X = self._preprocess_data(X)
+        else:
+            X = self._preprocess_data(X, set_indices=False)
+            self.set_indices(np.asarray(X_true))
+
+        cdf_types, inverse_cdf_types = self.get_cdf_estimation_type(p = X.shape[1])
+        self.transform_function = OnlineTransformFunction(self._cont_indices, 
+                                                          self._ord_indices, 
+                                                          window_size=self._window_size, 
+                                                          decay = self._decay, 
+                                                          cdf_types=cdf_types,
+                                                          inverse_cdf_types=inverse_cdf_types
+                                                         )
         n,p = X.shape
         self._corr = np.identity(p)
+
+        # initialize the model
+        n_train = self._batch_size if n_train == 0 else n_train
+        assert n_train > 0
+        ind_train = np.arange(n_train)
+        X_train = X[ind_train] if X_true is None else X_true[ind_train]
+        self.transform_function.update_window(X_train)
+        _ = self.partial_fit(X_batch = X_train, step_size=1)
+
         pvals = defaultdict(list)
         test_stats = defaultdict(list)
 
         i=0
         while True:
-            batch_lower= i*self._batch_size
-            batch_upper=min((i+1)*self._batch_size, n)
+            batch_lower = n_train + i*self._batch_size
+            batch_upper = min(n_train + (i+1)*self._batch_size, n)
             if batch_lower>=n:
                 break 
             if verbose:
                 print(f'start batch {i+1}')
             indices = np.arange(batch_lower, batch_upper, 1)
-            # Use the first batch to initialize the window. Thus in evaluation the first batch should be ignored.
-            if i==0:
-                self.transform_function.init_window(X[indices,:])
-            _pval, _diff = self.change_point_test(X[indices,:], step_size=self.stepsize(i+1), nsamples=nsamples)
-            if nsamples>0:
-                for t in self._corr_diff_type:
-                    pvals[t].append(_pval[t])
-                    test_stats[t].append(_diff[t])
+            _X_true = None if X_true is None else X_true[indices]
+            _pval, _diff = self.change_point_test(X[indices,:], X_true=_X_true, step_size=self.stepsize(i+1), nsamples=nsamples)
+            for t in self._corr_diff_type:
+                pvals[t].append(_pval[t])
+                test_stats[t].append(_diff[t])
             i+=1
         out = {'pval':pvals, 'statistics':test_stats}
         return out
+
+
+
+    ####################################
+    #### General nonpublic functions
+    ###################################
+    def get_imputed_confidence_interval_quantile(self, X=None, alpha = 0.95, num_ord_updates=1, num=200):
+        '''
+        Compute the confidence interval for each imputed entry.
+
+        Parameters
+        ----------
+            X, alpha: 
+                see Parameters in get_imputed_confidence_interval
+            num_ord_updates: int, default = 2
+                Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
+            num: int, default=200
+                Number of multiple samples to draw
+        Returns
+        -------
+            out: 
+                see Returns in get_imputed_confidence_interval
+        '''
+        if X is None:
+            X =  self.transform_function.X
+        X_imp_num = self.sample_imputation(X = X, num = num, num_ord_updates = num_ord_updates)
+        q_lower, q_upper = (1-alpha)/2, 1-(1-alpha)/2
+        lower, upper = np.quantile(X_imp_num, [q_lower, q_upper], axis=2)
+        obs_loc = ~np.isnan(X)
+        upper[obs_loc] = np.nan
+        lower[obs_loc] = np.nan
+        return {'upper':upper, 'lower':lower}
+
+    def get_reliability_cont(self, Ximp, alpha=0.95):
+        '''
+        Implements get_reliability when all variabels are continuous.
+
+        Parameters
+        ----------
+            Ximp: array-like of shape (n_samples, n_features) or None
+                Only used for all continuous variables. 
+                The returned Gaussian copula imputed matrix.
+            alpha: float in (0,1), default = 0.95
+                The desired significance level.
+        Returns
+        -------
+           reliability: array-like of shape (n_samples, n_features)
+                Elementwise reliability
+        '''
+        ct = self.get_imputed_confidence_interval(alpha = alpha)
+        d = ct['upper'] - ct['lower']
+
+        d_square, x_square = np.power(d,2), np.power(Ximp, 2)
+        missing_loc = np.isnan(self.transform_function.X)
+        # reliability has np.nan at observation locations because d has np.nan at those locations
+        reliability = (d_square[missing_loc].sum() - d_square) / (x_square[missing_loc].sum() - x_square) 
+        return reliability
+
+    def get_reliability_ord(self):
+        '''
+        Implements get_reliability when all variabels are ordinal.
+
+        Returns
+        -------
+           reliability: array-like of shape (n_samples, n_features)
+                Elementwise reliability
+        '''
+        std_cond = self._get_cond_std_missing()
+
+        try:
+            Zimp = self._latent_Zimp
+        except AttributeError:
+            print(f'Cannot compute reliability before model fitting and imputation')
+            raise 
+
+        Z_ord_lower, _ = self.transform_function.get_ord_latent()
+
+        reliability = np.zeros_like(Zimp) + np.nan
+        p = Zimp.shape[1]
+        for j in range(p):
+            # get cutsoff
+            col = Z_ord_lower[:,j]
+            missing_indices = np.isnan(col)
+            cuts = np.unique(col[~missing_indices])
+            cuts = cuts[np.isfinite(cuts)]
+
+            # compute reliability/the probability lower bound
+            for i,x in enumerate(missing_indices):
+                if x:
+                    t = np.abs(Zimp[i,j] - cuts).min()
+                    reliability[i,j] = 1 - np.power(std_cond[i,j]/t, 2)
+        return reliability
+
 
     ################################################
     #### offline functions
@@ -431,6 +674,14 @@ class GaussianCopula():
     def fit_transform_offline(self, X, **kwargs):
         '''
         Implement fit_transform when the training mode is 'standard' or 'minibatch-offline'
+
+        Parameters
+        ----------
+            See Parameters of fit()
+
+        Returns
+        -------
+            See Returns of transform()
         '''
         self.fit_offline(X, **kwargs)
         X_imp = self.transform()
@@ -439,6 +690,10 @@ class GaussianCopula():
     def fit_offline(self, X, first_fit=True, max_iter=None, convergence_verbose=True):
         '''
         Implement fit when the training mode is 'standard' or 'minibatch-offline'
+
+        Parameters
+        ----------
+            See Parameters of fit()
         '''
         X = self._preprocess_data(X)
         # do marginal estimation
@@ -477,6 +732,14 @@ class GaussianCopula():
     def fit_transform_online(self, X, X_true=None, n_train=0):
         '''
         Implement fit_transform when the training mode is 'minibatch-online'
+
+        Parameters
+        ----------
+            See Parameters of fit_transform()
+
+        Returns
+        -------
+            See Returns of transform()
         '''
         if X_true is not None:
             X_true = np.array(X_true)
@@ -520,17 +783,21 @@ class GaussianCopula():
         Updates the fit of the copula using the data in X_batch and returns the 
         imputed values and the new correlation for the copula
 
-        Args:
-            X_batch (matrix): data matrix with entries to use to update copula and be imputed
-            step_size (float in (0,1)): tunes how much to weight new covariance estimates
-            marginal_update: 
-                whether to update the marginal using observation in the new minibatch
+        Parameters
+        ----------
+            X_batch: array-like of shape (nbatch, nfeatures)
+                data matrix with entries to use to update copula and be imputed
+            step_size: float in (0,1), default=0.5
+                tunes how much to weight new covariance estimates
             X_true:
                 If not None, it indicates that some (could be all) of the missing entries of X_batch are revealed,
                 and stored in X_true, after the imputation of X_batch. Those observation entries will be used to 
                 update the model. 
-        Returns:
-            X_imp (matrix): X_batch with missing values imputed
+        
+        Returns
+        -------
+            X_imp: array-like of shape (nbatch, nfeatures)
+                X_batch with missing values imputed
         """
         # impute missing entries in new data using previously fitted model
         # just a step of out-of-sample imputation
@@ -555,6 +822,19 @@ class GaussianCopula():
     def partial_fit(self, X_batch, step_size=0.5, model_update=True):
         '''
         Update the copula correlation from new samples in X_batch, with given step size
+
+        Parameters
+        ----------
+            X_batch: array-like of shape (nbatch, nfeatures)
+                data matrix with entries to use to update copula 
+            step_size: float in (0,1), default=0.5
+                tunes how much to weight new covariance estimates
+            model_update: bool, default=True
+                If True, update fitting information 
+        Returns
+        -------
+            new_corr: array-like of shape (nfeatures, nfeatures)
+                updated copula correlation
         '''
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_batch)
         Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
@@ -573,13 +853,34 @@ class GaussianCopula():
 
         return new_corr
 
-    def change_point_test(self, X_batch, step_size, nsamples=100):
-        n,p = X_batch.shape
-        missing_indices = np.isnan(X_batch)
+    def change_point_test(self, X, step_size, X_true=None, nsamples=100):
+        '''
+        Conduct change point test at the newly received data batch X
+
+        Parameters
+        ----------
+            X: array-like of shape (nbatch, nfeatures)
+                The newly received (incomplete) data batch
+            X_true: array-like of shape (nbatch, nfeatures)
+                A matrix agrees with X at observed entries but has fewer missing entries.
+            step_size: flaot in (0,1)
+                The correlation update step size
+            nsamples: int, default = 100
+                The number of samples to draw for approximating the null distribution.
+
+        Returns
+        -------
+            pval: float
+                empirical p-value
+            diff: float
+                test statistics
+        '''
+        n,p = X.shape
+        missing_indices = np.isnan(X)
         prev_corr = self._corr.copy()
         changing_stat = defaultdict(list)
 
-        X_to_impute = np.zeros_like(X_batch) * np.nan
+        X_to_impute = np.zeros_like(X) * np.nan
         for i in range(nsamples):
             z = self._rng.multivariate_normal(np.zeros(p), prev_corr, n)
             # mask
@@ -588,20 +889,20 @@ class GaussianCopula():
             x[:,self.ord_indices] = self.transform_function.impute_ord_observed(z, X_to_impute)
             x[missing_indices] = np.nan
             # TODO: compare with enabling marginal_update
-            new_corr = self.partial_fit(x, step_size=step_size, model_update=False, marginal_update=False)
+            new_corr = self.partial_fit(x, step_size=step_size, model_update=False)
             diff = self.get_matrix_diff(prev_corr, new_corr, self._corr_diff_type)
             self._update_corr_diff(diff, output=changing_stat)
 
-        new_corr = self.partial_fit(X_batch, step_size=step_size, model_update=True, marginal_update=True)
+        self.transform_function.update_window(X)
+        new_corr = self.partial_fit(X, step_size=step_size, model_update=True)
         diff = self.get_matrix_diff(prev_corr, new_corr, self._corr_diff_type)
         self._update_corr_diff(diff)
 
         # compute empirical p-values
         changing_stat = pd.DataFrame(changing_stat)
         pval = {}
-        if nsamples>0:
-            for t in self._corr_diff_type:
-                pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsamples+1)
+        for t in self._corr_diff_type:
+            pval[t] = (np.sum(diff[t]<changing_stat[t])+1)/(nsamples+1)
         return pval, diff
 
     ################################################
@@ -612,9 +913,18 @@ class GaussianCopula():
         '''
         Transform the complete latent matrix Z to the observed space, but only keep values at missing entries (to be imputed). 
         All values at observe entries will be replaced with original observation in X_to_impute.
-        Args:
-            X_to_transform: (nsamples, nfeatures) or None
+
+        Parameters
+        ----------
+            Z: array-like of shape (nsamples, nfeatures)
+                A complete matrix in latent Gaussian space
+            X_to_impute: array-like of shape (nsamples, nfeatures) or None
                 If None, self.transform_function.X will be used. 
+
+        Returns
+        -------
+            X_imp: array-like of shape (nsamples, nfeatures)
+                The transformed complete matrix in the observed space
         '''
         # During the fitting process, all ordinal columns are moved to appear before all continuous columns
         # Rearange the obtained results to go back to the original data ordering
@@ -628,6 +938,24 @@ class GaussianCopula():
         return X_imp
 
     def _observed_to_latent(self, X_to_transform=None, Z_cont=None):
+        '''
+        Transform incomplete/complete data matrix X_to_transform to the latent Gaussian space.
+
+        Parameters
+        ----------
+            X_to_transform: array-like of shape (nsamples, nfeatures) or None
+                If None, self.transform_function.X will be used. 
+            Z_cont: array-like of shape (nsamples, nfeatures_cont)
+                The submatrix of the desired transformed latent matrix.
+                Used with cauction: it is designed to save repetitive computation of generating Z_cont
+
+        Returns
+        -------
+            Z: array-like of shape (nsamples, nfeatures)
+                Transformed latent matrix
+            Z_ord_upper, Z_ord_lower: array-like of shape  (nsamples, nfeatures_ord)
+                Upper and lower bound to sample from
+        '''
         if X_to_transform is None:
             X_to_transform = self.transform_function.X
         if Z_cont is None:
@@ -640,37 +968,29 @@ class GaussianCopula():
         Z[:, self.ord_indices] = Z_ord
         return Z, Z_ord_lower, Z_ord_upper
 
-    def _init_copula_corr(self, Z):
-        '''
-        Initialize the copula correlaiont matrix using incomplete Z. First complete Z and then takes its sample correlaiton matrix.
-        '''
-        n,p = Z.shape
-        # mean impute the missing continuous values for the sake of covariance estimation
-        Z_imp = Z.copy()
-        Z_imp[np.isnan(Z_imp)] = 0.0
-
-        # initialize the correlation matrix
-        self._corr = np.corrcoef(Z_imp, rowvar=False)
-        if self._verbose > 1:
-            _svdvals = svdvals(self._corr)
-            print(f'singular values of the initialized correlation has min {_svdvals.min():.5f} and max {_svdvals.max():.5f}')
-
-
     def _fit_covariance(self, Z, Z_ord_lower, Z_ord_upper, first_fit=True, max_iter=None, convergence_verbose=True):
         """
         Fits the gaussian copula correlation matrix using only the transformed data in the latent space.
 
-        Args:
-            Z (nsamples, nfeatures)
+        Parameters
+        ----------
+            Z: array-like of shape (nsamples, nfeatures)
                 Transformed latent matrix
-            Z_ord_upper, Z_ord_lower (nsamples, nfeatures_ord)
+            Z_ord_upper, Z_ord_lower: array-like of shape  (nsamples, nfeatures_ord)
                 Upper and lower bound to sample from
+            first_fit: bool, default=True
+                if True, initialize the copula correlation matrix.
             max_iter: int or None
                 The maximum number of iterations to run. If None, use self,_max_iter.
-        Returns:
-            C_ord
-            Z_imp (nsamples, nfeatures)
-                The completed matrix in the latent space
+            convergence_verbose: bool, default=True
+                If True, store self.n_iter_ as the number of iterations run
+
+        Returns
+        -------
+            Z_imp: array-like of shape (nsamples,nfeatures) 
+                The completed matrix in the latent Gaussian space.
+            C_ord: array-like of shape (nfeatures, nfeatures) 
+                The conditional covariance due to ordinal truncation.
         """
         if first_fit:
            self._init_copula_corr(Z)
@@ -723,8 +1043,8 @@ class GaussianCopula():
             if self._verbose>0:
                 print(f"Iteration {self._iter}: copula parameter change {corrudpate:.4f}, likelihood {iterloglik:.4f}")
             
-            # append new likelihood and determine if early stopping criterion is satisfied
-            converged = self._update_loglikelihood(iterloglik)
+            # append new likelihood
+            self.likelihood.append(iterloglik)
                 
             if corrudpate < self._threshold:
                 converged = True
@@ -737,24 +1057,28 @@ class GaussianCopula():
             self._set_n_iter(converged, i)
         return  Z_imp, C_ord
 
-
-
-
-
     def _em_step(self, Z, r_lower, r_upper):
         """
         Executes one step of the EM algorithm to update the covariance 
         of the copula
 
-        Args:
-            Z (matrix): Latent values
-            r_lower (matrix): lower bound on latent ordinals
-            r_upper (matrix): upper bound on latent ordinals
+        Parameters
+        ----------
+            Z: array-like of shape (nsamples, nfeatures)
+                Transformed latent matrix
+            Z_ord_upper, Z_ord_lower: array-like of shape  (nsamples, nfeatures_ord)
+                Upper and lower bound to sample from
 
-        Returns:
-            sigma (matrix): an estimate of the covariance of the copula
-            Z_imp (matrix): estimates of latent values
-            Z (matrix): Updated latent values
+        Returns
+        -------
+            sigma: array-like of shape (nfeatures, nfeatures)
+                an estimate of the covariance of the copula
+            Z_imp: array-like of shape (nsamples,nfeatures) 
+                The completed matrix in the latent Gaussian space.
+            C_ord: array-like of shape (nfeatures, nfeatures)
+                The conditional covariance due to ordinal truncation.
+            loglik: float
+                The computed log-likelihood
 
         """
         n,p = Z.shape
@@ -815,11 +1139,27 @@ class GaussianCopula():
             print(np.round(Z_imp[:,idp],4))
             print(f'The fitted window is {self.transform_function.X[:,idp]}')
             raise
-        return sigma, Z_imp, Z, C_ord, out_dict['loglik']
+        loglik = out_dict['loglik']
+        return sigma, Z_imp, Z, C_ord, loglik
 
     def _sample_latent(self, Z, Z_ord_lower, Z_ord_upper, num, num_ord_updates=2):
         '''
-        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
+        Given incomplete Z, whice has missing entries due to missing observation, 
+        sample those missing entries using the multivariate normal assumption in the latent space.
+
+        Parameters
+        ----------
+            Z: array-like of shape (nsamples, nfeatures)
+                Transformed latent matrix
+            Z_ord_upper, Z_ord_lower: array-like of shape  (nsamples, nfeatures_ord)
+                Upper and lower bound to sample from
+            num_ord_updates: int, default = 2
+                Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
+
+        Returns
+        -------
+            Z_imp_num: array-like of shape (nsamples, nfeatures, num)
+                The sampled latent values. 
         '''
         n, p = Z.shape
         max_workers = self._max_workers
@@ -855,7 +1195,24 @@ class GaussianCopula():
 
     def _fillup_latent(self, Z, Z_ord_lower, Z_ord_upper, num_ord_updates=2):
         '''
-        Given incomplete Z, whice has missing entries due to missing observation, fill up those missing entries using the multivariate normal assumption in the latent space.
+        Given incomplete Z, whice has missing entries due to missing observation, 
+        fill up those missing entries using the multivariate normal assumption in the latent space.
+
+        Parameters
+        ----------
+            Z: array-like of shape (nsamples, nfeatures)
+                Transformed latent matrix
+            Z_ord_upper, Z_ord_lower: array-like of shape  (nsamples, nfeatures_ord)
+                Upper and lower bound to sample from
+            num_ord_updates: int, default = 2
+                Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
+
+        Returns
+        -------
+            Z_imp: array-like of shape (nsamples, nfeatures)
+                The imputed latent values
+            C_ord: array-like of shape (nfeatures, nfeatures)
+                The conditional covariance due to ordinal truncation.
         '''
         n, p = Z.shape
         max_workers = self._max_workers
@@ -889,6 +1246,20 @@ class GaussianCopula():
     def _get_cond_std_missing(self, X=None, Cord=None):
         '''
         The conditional std of each missing location given other observation. 
+
+        Parameters
+        ----------
+            X: array-like of shape (nsamples,nfeatures) or None
+                Only its shape is used
+                Set to the data used for model fitting if None
+            Cord: array-like of shape (nfeatures, nfeatures) or None
+                The conditional covariance due to ordinal truncation.
+                Set to the returned values after model fitting if None
+
+        Returns
+        -------
+            std_cond: array-like of shape (nsamples,nfeatures) 
+                Elementwise conditional std at each missing location. np.nan at observed locations.
         '''
         if Cord is None:
             try:
@@ -922,79 +1293,23 @@ class GaussianCopula():
                     _var += np.einsum('ij, j, ji -> i', sigma_obs_obs_inv_obs_missing.T, Cord[i, obs_indices], sigma_obs_obs_inv_obs_missing)
                 std_cond[i, missing_indices] = np.sqrt(_var)
         return std_cond
-    
-
-    def get_reliability_cont(self, Ximp, alpha=0.95):
-        '''
-        Implements get_reliability when all variabels are continuous.
-        '''
-        ct = self.get_imputed_confidence_interval(alpha = alpha)
-        d = ct['upper'] - ct['lower']
-
-        d_square, x_square = np.power(d,2), np.power(Ximp, 2)
-        missing_loc = np.isnan(self.transform_function.X)
-        # reliability has np.nan at observation locations because d has np.nan at those locations
-        reliability = (d_square[missing_loc].sum() - d_square) / (x_square[missing_loc].sum() - x_square) 
-        return reliability
-
-    def get_reliability_ord(self):
-        '''
-        Implements get_reliability when all variabels are ordinal.
-        '''
-        std_cond = self._get_cond_std_missing()
-
-        try:
-            Zimp = self._latent_Zimp
-        except AttributeError:
-            print(f'Cannot compute reliability before model fitting and imputation')
-            raise 
-
-        Z_ord_lower, _ = self.transform_function.get_ord_latent()
-
-        reliability = np.zeros_like(Zimp) + np.nan
-        p = Zimp.shape[1]
-        for j in range(p):
-            # get cutsoff
-            col = Z_ord_lower[:,j]
-            missing_indices = np.isnan(col)
-            cuts = np.unique(col[~missing_indices])
-            cuts = cuts[np.isfinite(cuts)]
-
-            # compute reliability/the probability lower bound
-            for i,x in enumerate(missing_indices):
-                if x:
-                    t = np.abs(Zimp[i,j] - cuts).min()
-                    reliability[i,j] = 1 - np.power(std_cond[i,j]/t, 2)
-        return reliability
-
-    def _project_to_correlation(self, covariance):
-        """
-        Projects a covariance to a correlation matrix, normalizing it's diagonal entries. Only checks for diagonal entries to be positive.
-
-        Args:
-            covariance (matrix): a covariance matrix
-
-        Returns:
-            correlation (matrix): the covariance matrix projected to a correlation matrix
-        """
-        D = np.diagonal(covariance)
-        if any(np.isclose(D, 0)): 
-            raise ZeroDivisionError("unexpected zero covariance for the latent Z") 
-        D_neg_half = 1.0/np.sqrt(D)
-        covariance *= D_neg_half
-        return covariance.T * D_neg_half
 
     def _init_Z_ord(self, Z_ord_lower, Z_ord_upper):
         """
         Initializes the observed latent ordinal values by sampling from a standard
         Gaussian trucated to the inveral of Z_ord_lower, Z_ord_upper
 
-        Args:
-            Z_ord_lower (matrix): lower range for ordinals
-            Z_ord_upper (matrix): upper range for ordinals
+        Parameters
+        ----------
+            Z_ord_lower : array-like of shape (nsamples, nfeatures_ordinal)
+                lower range for ordinals
+            Z_ord_upper : array-like of shape (nsamples, nfeatures_ordinal)
+                upper range for ordinals
 
-        Returns:
-            Z_ord (range): Samples drawn from gaussian truncated between Z_ord_lower and Z_ord_upper
+        Returns
+        -------
+            Z_ord : array-like of shape (nsamples, nfeatures_ordinal)
+                Samples drawn from gaussian truncated between Z_ord_lower and Z_ord_upper
         """
         Z_ord = np.empty(Z_ord_lower.shape)
         Z_ord[:] = np.nan
@@ -1015,28 +1330,85 @@ class GaussianCopula():
                     Z_ord[i,j] = norm.ppf(u_sample)
         return Z_ord
 
+    def _init_copula_corr(self, Z):
+        '''
+        Initialize the copula correlaiont matrix using incomplete Z. First complete Z and then takes its sample correlaiton matrix.
+
+        Parameters
+        ----------
+            Z: array-like of shape (nsamples, nfeatures)
+                Transformed latent matrix
+        '''
+        n,p = Z.shape
+        # mean impute the missing continuous values for the sake of covariance estimation
+        Z_imp = Z.copy()
+        Z_imp[np.isnan(Z_imp)] = 0.0
+
+        # initialize the correlation matrix
+        self._corr = np.corrcoef(Z_imp, rowvar=False)
+        if self._verbose > 1:
+            _svdvals = svdvals(self._corr)
+            print(f'singular values of the initialized correlation has min {_svdvals.min():.5f} and max {_svdvals.max():.5f}')
+
     ################################################
     #### helper functions
     ################################################
+
+    def _project_to_correlation(self, covariance):
+        """
+        Projects a covariance to a correlation matrix, normalizing it's diagonal entries. Only checks for diagonal entries to be positive.
+
+        Parameters
+        ----------
+            covariance: array-like of shape (nfeatures, nfeatures)
+
+        Returns
+        -------
+            correlation: array-like of shape (nfeatures, nfeatures)
+        """
+        D = np.diagonal(covariance)
+        if any(np.isclose(D, 0)): 
+            raise ZeroDivisionError("unexpected zero covariance for the latent Z") 
+        D_neg_half = 1.0/np.sqrt(D)
+        covariance *= D_neg_half
+        correlation = covariance.T * D_neg_half
+        return correlation
 
     def _get_scaled_diff(self, prev_sigma, sigma):
         """
         Get's the scaled difference between two correlation matrices
 
-        Args:
-            prev_sigma (matrix): previous estimate of a matrix
-            sigma (matrix): current estimate of a matrix
+        Parameters
+        ----------
+            prev_sigma: array-like of shape (nfeatures, nfeatures)
+                previous estimate of a matrix
+            sigma: array-like of shape (nfeatures, nfeatures)
+                current estimate of a matrix
 
-        Returns: 
-            diff (float): scaled distance between the inputs
+        Returns
+        -------
+            diff: float 
+                scaled distance between the inputs
         """
-
-        return np.linalg.norm(sigma - prev_sigma) / np.linalg.norm(sigma)
+        diff = np.linalg.norm(sigma - prev_sigma) / np.linalg.norm(sigma)
+        return diff
 
 
     def _preprocess_data(self, X, set_indices = True):
         '''
-        Store column names, set continuous/ordinal variable indices and change X to be a numpy array
+        Store column names, set variable types and change X to be a numpy array
+
+        Parameters
+        ----------
+            X: array-like of shape (nfeatures, nfeatures)
+                Input data
+            set_indices: bool, default=True
+                If true, set variaable types
+
+        Returns
+        -------
+            X: numpy array of shape (nfeatures, nfeatures)
+                Preprocessed input data
         '''
         if hasattr(X, 'columns'):
             self.features_names = np.array(X.columns.to_list())
@@ -1054,6 +1426,9 @@ class GaussianCopula():
                 self.var_type_dict[name] = values
 
     def has_truncation(self):
+        '''
+        Return if a truncated variable is present
+        '''
         truncation = False
         for name in ['lower_truncated', 'upper_truncated', 'twosided_truncated']:
             if name in self.var_type_dict:
@@ -1114,37 +1489,30 @@ class GaussianCopula():
 
         self.var_type_dict = var_type_dict
 
-    def get_vartypes(self, feature_names=None):
-        '''
-        Return the variable types used during the model fitting. Each variable is one of the following:
-            'continuous', 'ordinal', 'lower_truncated', 'upper_truncated', 'twosided_truncated'
-        '''
-        _var_types = self.var_type_dict.copy()
-        if feature_names is not None:
-            names = list(feature_names)
-            for key,value in _var_types.items():
-                _var_types[key] = [names[i] for i in value]
-        for name in var_type_names:
-            if name not in _var_types:
-                _var_types[name] = []
-        return _var_types
-
     def get_vartype_indices(self, X):
         """
         get's the indices of continuos columns by returning
         those indicies which have at least max_ord distinct values
 
-        Args:
-            X (matrix): input matrix
-            max_ord (int): maximum number of distinct values an ordinal can take on in a column
+        Parameters
+        ----------
+            X: array-like of shape (nsamples, nfeatures)
+                input matrix
 
         Returns:
-            indices (array): indices of the columns which have at most max_ord distinct entries
+            var_type_list: list of str of length nfeatures
+                The specified variable types. Each element is one of var_type_names.
         """
         def is_cont_using_counts(counts):
+            '''
+            return if continuous 
+            '''
             return len(counts)>0 and counts.max()/counts.sum() < self._min_ord_ratio
 
         def is_special_type(x):
+            '''
+            return if is general-ordinal (not continuous), lower_truncated, upper_truncated, twosided truncated
+            '''
             obs = ~np.isnan(x)
             x = x[obs]
             n = len(x)
@@ -1176,6 +1544,9 @@ class GaussianCopula():
             return is_ord, is_lower_truncated, is_upper_truncated, is_twoside_truncated
 
         def which_type(is_ord, is_lower_truncated, is_upper_truncated, is_twoside_truncated):
+            '''
+            determine the variable type
+            '''
             if is_ord:
                 if is_lower_truncated:
                     t = 'lower_truncated'
@@ -1189,7 +1560,6 @@ class GaussianCopula():
                 t = 'continuous'
             return t
 
-
         ord_indices = []
         lower_truncated_indices = []
         upper_truncated_indices = []
@@ -1199,35 +1569,15 @@ class GaussianCopula():
 
         for i, col in enumerate(X.T):
             is_ord, is_lower_truncated, is_upper_truncated, is_twoside_truncated = is_special_type(col)
-            #ord_indices.append(is_ord)
-            #twoside_truncated_indices.append(is_twoside_truncated)
-            #lower_truncated_indices.append(is_lower_truncated)
-            #upper_truncated_indices.append(is_upper_truncated)
             var_type_list.append(which_type(is_ord, is_lower_truncated, is_upper_truncated, is_twoside_truncated))
-
-        #var_type_dict = {'ordinal': np.array(ord_indices),
-        #                'lower_truncated': np.array(lower_truncated_indices),
-        #                'upper_truncated': np.array(upper_truncated_indices),
-        #                'twosided_truncated': np.array(twoside_truncated_indices)
-        #                }
 
         var_type_list = np.array(var_type_list, dtype = 'U20')
         return var_type_list
 
-    def _update_loglikelihood(self, iterloglik):
-        converged = False
-        loglik = self.likelihood
-        loglik.append(iterloglik)
-        if self._training_mode == 'standard' and len(loglik)>1 and loglik[-1] >= loglik[-2]:
-            change_ratio = self._get_scaled_diff(loglik[-2], loglik[-1])
-            if change_ratio<self._likel_threshold:
-                if self._verbose>1: 
-                    print(f'early stop because the likelihood increase is below {self._likel_threshold}')
-                converged = True
-        return converged
-
-
     def _set_n_iter(self, converged, i):
+        '''
+        Store the number of iterations run
+        '''
         if self._verbose>0: 
             if not converged:
                 print("Convergence not achieved at maximum iterations")
@@ -1237,6 +1587,16 @@ class GaussianCopula():
 
 
     def _update_corr_diff(self, corr_diff, output=None):
+        '''
+        Compute and store correlation update
+
+        Parameters
+        ----------
+            corr_diff: dict 
+                Have self._corr_diff_type as keys
+            output: dict or None
+                If None, set to self.corr_diff
+        '''
         if output is None:
             to_append = self.corr_diff
         else:
@@ -1252,12 +1612,21 @@ class GaussianCopula():
         Return the correlation change tracking statistics, as some matrix norm of normalized matrix difference.
         Support three norms currently: 'F' for Frobenius norm, 'S' for spectral norm and 'N' for nuclear norm. 
         User-defined norm can also be used through simple modification.
-        Args:
-            simga_old: the estimate of copula correlation matrix based on historical data
-            sigma_new: the estiamte of copula correlation matrix based on new batch data
-            type (a subset of {'F', 'S', 'N'}): the type of matrix norm to use for constructing test statistics. 
-        Returns:
-            test_stats: a dictionary with (matrix norm type, the test statistics) as (key, value) pair.
+
+        Parameters
+        ----------
+            simga_old: array-like of shape (nfeatures, nfeatures)
+                the estimate of copula correlation matrix based on historical data
+            sigma_new: array-like of shape (nfeatures, nfeatures)
+                the estiamte of copula correlation matrix based on new batch data
+            type: list of str
+                a subset of {'F', 'S', 'N'}
+                the type of matrix norm to use for constructing test statistics. 
+        
+        Returns
+        -------
+            test_stats: dict
+                have (matrix norm type, the test statistics) as (key, value) pair.
         '''
         p = sigma_old.shape[0]
         u, s, vh = np.linalg.svd(sigma_old)

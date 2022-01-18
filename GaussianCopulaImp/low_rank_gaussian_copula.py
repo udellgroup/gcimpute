@@ -15,51 +15,61 @@ class LowRankGaussianCopula(GaussianCopula):
     It is a special case of Gaussian copula model with structured copula correlation matrix: it admits decomposition sigma*I+A*t(A), 
     where A has shape (p,rank) with rank<p. 
 
-    Attributes
+    Parameters
     ----------
-    cont_indices: ndarray of (n_features,)
-        Indication of continuous(True) or oridnal(False) variable decision. 
-    n_iter_: int
-        Number of iteration rounds that occurred. Will be less than self._max_iter if early stopping criterion was reached.
-    likelihood: list of length n_iter_
-        The computed pseudo likelihood value at each iteration.
-    feature_names: ndarray of shape n_features
-        Names of features seen during fit. Defined only when X has feature names that are all strings.
+    rank: int
+        The number of the latent factors, i.e. the rank of the latent data generating space
+    tol: float, default=0.01
+        The convergence threshold. EM iterations will stop when the parameter update ratio is below this threshold.
+    max_iter: int, default=50
+        The number of EM iterations to perform.
+    random_state: int, default=101
+        Controls the randomness in generating latent ordinal values. Not used if there is no ordinal variable.
+    n_jobs: int, default=1
+        The number of jobs to run in parallel.
+    verbose: int, default=0
+        Controls the verbosity when fitting and predicting. 
+    num_ord_updates: int, default=1
+        Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
+        We do not recommend using value larger than 1 (the default value) at this moment. It will slow the speed without clear 
+        performance improvement.
+    min_ord_ratio: float, default=0.1
+        Used for automatic variable type decision. The largest mode frequency for continuous variables.
+
+
 
     Methods
     -------
     fit(X)
-        fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
+        Fit a Gaussian copula model on X.
+    transform(X)
+        Return the imputed X using the stored model.
     fit_transform(X)
-        At each sequentially observed data batch, fit a Gaussian copula model from incomplete data and then use the fitted model to impute the missing entries.
+        Fit a Gaussian copula model on X and return the transformed X.
+    fit_transform_evaluate(X, eval_func)
+        Conduct eval_func on the imputed datasets returned after each iteration.
+    sample_imputation(X)
+        Return multiple imputed datasets X using the stored model.
     get_params()
         Get parameters for this estimator.
-    get_imputed_confidence_interval(alpha=0.95)
-        Get the confidence intervals for the imputed missing entries when all variables are continuous
-    get_reliability(Ximp=None, alpha=0.95)
+    get_vartypes()
+        Get the specified variable types used in model fitting.
+    get_imputed_confidence_interval()
+        Get the confidence intervals for the imputed missing entries.
+    get_reliability()
         Get the reliability, a relative quantity across all imputed entries, when either all variables are continuous or all variables are ordinal 
     '''
-    def __init__(self, rank, tol=0.01, **kwargs):
-        '''
-        Parameters:
-            rank: int
-                The number of the latent factors, i.e. the rank of the latent data generating space
-            min_ord_ratio: float, default=0.1
-                When cont_indices is None, variables whose largest occurence ratio among unique values is smaller than min_ord_ratio 
-                are regarded as continuous variables.
-            tol: float, default=0.01
-                The convergence threshold. EM iterations will stop when the parameter update ratio is below this threshold.
-            likelihood_min_increase: float, default=0.01
-                The minimal likelihood increase ratio required to keep running the EM algorithm.
-            kwargs:
-                Keyword arguments of GaussianCopula()
-        '''
-        super().__init__(training_mode='standard', tol=tol, **kwargs)
+    def __init__(self, rank, **kwargs):
+        super().__init__(training_mode='standard',  **kwargs)
         self._rank = rank
         self._W = None
         self._sigma = None
 
         #self.corrupdate_grassman = []
+
+    ################################################
+    #### public functions
+    ################################################
 
     def get_params(self):
         '''
@@ -71,11 +81,13 @@ class LowRankGaussianCopula(GaussianCopula):
         params = {'copula_factor_loading': self._W, 'copula_noise_ratio':self._sigma}
         return params
 
+    ################################################
+    #### core functions
+    ################################################
 
-    def _get_cond_std_missing(self):
+    def _get_cond_std_missing(self, X=None, Cord=None):
         '''
-        The conditional std of each missing location given other observation. 
-        The computation under LRGC is adjusted by exploting the SVD decomposition of the copula parameter W.
+        Specialized implementation for LRGC
         '''
         try:
             Cord = self._latent_Cord
@@ -110,7 +122,21 @@ class LowRankGaussianCopula(GaussianCopula):
 
     def _init_copula_corr(self, Z, Z_ord_lower, Z_ord_upper):
         '''
-        Implement _init_copula_corr for LRGC. 
+        Specialized implementation for LRGC
+
+        Parameters
+        ----------
+            Z : array-like of shape (nsamples, nfeatures_ordinal)
+                latent matrix 
+            Z_ord_lower : array-like of shape (nsamples, nfeatures_ordinal)
+                lower range for ordinals
+            Z_ord_upper : array-like of shape (nsamples, nfeatures_ordinal)
+                upper range for ordinals
+
+        Returns
+        -------
+            Z_imp: array-like of shape (nsamples, nfeatures)
+                The imputed latent values used to initialize the copula correlation 
         '''
         # Refine Z_imp using truncated (low-rank) SVD for missing entries to obtain initial parameter estimate
         Z_imp = Z.copy()
@@ -159,8 +185,8 @@ class LowRankGaussianCopula(GaussianCopula):
             if self._verbose>0:
                 print(f'Interation {self._iter}: noise ratio {self._sigma:.4f}, copula parameter change {wupdate:.4f}, likelihood {iterloglik:.4f}')
 
-            # append new likelihood and determine if early stopping criterion is satisfied
-            converged = self._update_loglikelihood(iterloglik)
+            # append new likelihood
+            self.likelihood.append(iterloglik)
 
             if wupdate < self._threshold:
                 converged = True
@@ -177,14 +203,21 @@ class LowRankGaussianCopula(GaussianCopula):
 
     def _impute(self, Z, W, sigma):
         """
-        Impute missing values
-        Args:
-            W (matrix): an estimate of the latent coefficient matrix of the low rank Gaussian copula
-            sigma (scalar): an estimate of the latent noise variance of the low rank Gaussian copula
-            Z (matrix): the transformed value, at observed continuous entry; the conditional mean, at observed ordinal entry; NA elsewhere
-            S: a factor used for imputation
-        Returns:
-            Zimp (matrix): a copy of Z, but with missing entries replaced by their conditional mean imputation.
+        Impute missing values in the latent space using provided model parameters
+
+        Parameters
+        ----------
+            W : array-like of shape (nfeatures, rank)
+                the latent coefficient matrix of the low rank Gaussian copula
+            sigma : float in (0,1)
+                the latent noise variance of the low rank Gaussian copula
+            Z : array-like of shape (nsamples, nfeatures)
+                the transformed value in the latent space
+
+        Returns
+        -------
+            Zimp : array-like of shape (nsamples, nfeatures)
+                a copy of Z, but with missing entries replaced by their conditional mean imputation.
         """
         n,p = Z.shape
         Zimp = np.copy(Z)
@@ -204,6 +237,9 @@ class LowRankGaussianCopula(GaussianCopula):
         return Zimp
 
     def _em_step(self, Z, r_lower, r_upper):
+        '''
+        Specialized implementation for LRGC
+        '''
         n,p = Z.shape
         assert len(self._W.shape)==2, f'invalid W shape {self._W.shape}'
         assert n>0, 'EM step receives empty input'
@@ -277,11 +313,37 @@ class LowRankGaussianCopula(GaussianCopula):
         W, sigma = self._scale_corr(W_new, sigma_new)
         return W, sigma, Z, C_ord, loglik/n
 
+    def _sample_latent(self, Z, Z_ord_lower, Z_ord_upper, num, num_ord_updates=2):
+        '''
+        Specialized implementation for LRGC
+        '''
+        raise NotImplementedError
 
+    def _fillup_latent(self, Z, Z_ord_lower, Z_ord_upper, num_ord_updates=2):
+        '''
+        Specialized implementation for LRGC
+        '''
+        raise NotImplementedError
 
     def _init_impute_svd(self, Z, rank, Z_ord_lower, Z_ord_upper):
         '''
         Return an imputed Z using SVD on the zero-imputed Z
+
+        Parameters
+        ----------
+            Z : array-like of shape (nsamples, nfeatures_ordinal)
+                latent matrix 
+            Z_ord_lower : array-like of shape (nsamples, nfeatures_ordinal)
+                lower range for ordinals
+            Z_ord_upper : array-like of shape (nsamples, nfeatures_ordinal)
+                upper range for ordinals
+            rank : int
+                rank to use for SVD
+
+        Returns
+        -------
+            Z_imp: array-like of shape (nsamples, nfeatures)
+                The imputed latent values used to initialize the copula correlation 
         '''
         Z_imp = np.copy(Z)
         Z_imp[np.isnan(Z_imp)] = 0.0
@@ -311,46 +373,27 @@ class LowRankGaussianCopula(GaussianCopula):
 
         return Z_imp
 
-
     def _scale_corr(self, W, sigma):
+        '''
+        Scale W and sigma so that WW^T + sigma I is a correlation matrix
+        
+        Parameters
+        ----------
+            W : array-like of shape (nfeatures, rank)
+                the latent coefficient matrix of the low rank Gaussian copula
+            sigma : float in (0,1)
+                the latent noise variance of the low rank Gaussian copula
+
+        Returns
+        -------
+            W : array-like of shape (nfeatures, rank)
+                the adjusted latent coefficient matrix of the low rank Gaussian copula
+            sigma : float in (0,1)
+                the adjusted latent noise variance of the low rank Gaussian copula
+        '''
         p = W.shape[0]
         tr = np.sum(np.square(W), axis=1)
         sigma = np.mean(1.0/(tr + sigma)) * sigma
         for j in range(p):
             W[j,:] = np.sqrt(1 - sigma) * W[j,:]/np.sqrt(tr[j])
         return W, sigma
-
-
-    def _impute_missing_oracle(self, X, W, sigma, f = None, finv = None, max_ord_levels = 20):
-        # only for continuous matrix
-        n, k = X.shape[0], W.shape[1]
-        cont_indices = self.get_cont_indices(X, max_ord_levels=max_ord_levels) 
-        ord_indices = ~cont_indices
-        self.transform_function = TransformFunction(X, cont_indices, ord_indices)
-        Z = self.transform_function.get_cont_latent()
-        #Z = X
-        U, d, _ = np.linalg.svd(W, full_matrices=False)
-        S = np.zeros((n,k))
-        for i in range(n):
-            obs_indices = np.nonzero(~np.isnan(Z[i,:]))[0]
-
-            zi_obs = Z[i,obs_indices]
-            Ui_obs = U[obs_indices,:]
-            UU_obs = np.dot(Ui_obs.T, Ui_obs) # YX: better edit to avoid vector-vector inner product
-
-            S[i,:] = np.linalg.solve(UU_obs + sigma * np.diag(1.0/np.square(d)), np.dot(Ui_obs.T, zi_obs))
-
-        S = self._comp_S(Z, W, sigma)
-        Z_imp = self._impute(Z, S, W)
-        X_imp = np.empty(X.shape)
-        X_imp = self.transform_function.impute_cont_observed(Z_imp)
-        return X_imp
-
-
-
-
-
-
-
-
-

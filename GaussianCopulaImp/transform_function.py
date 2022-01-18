@@ -59,16 +59,31 @@ class TransformFunction():
 
     def impute_cont_observed(self, Z, X_to_impute=None):
         """
-        Return the observed variables corresponding to the continuous columns in Z,
+        Compute the observed variables corresponding to the continuous columns in Z,
         but only at the non-nan entries of X_to_impute.
-        To return a complete matrix, input an all nan X_to_impute.
         The marginal estimation is done using observation in self.X.
+        To return a complete matrix, input an all np.nan X_to_impute.
+
+        Parameters
+        ----------
+            Z: array-like of shape (nsamples, nfeatures)
+                complete matrix in latent Gaussian space
+            X_to_impute: array-like of shape (nsamples, nfeatures) or None
+                Used to indicate the locations to be kept. 
+                If None, set to the contniuous columns of the stored data
+        
+        Returns
+        -------
+            X_imp: array-like of shape (nsamples, nfeatures)
+                The completed matrix in the observed space.
+                At the observed entries of X_to_impute, X_imp agrees with X_to_impute.
+                At the missing entries of X_to_impute, X_imp is transformed from Z
+
         """
         indices = self.cont_indices
         if X_to_impute is None:
-            X_to_impute = self.X[:, indices]
-        else:
-            X_to_impute = X_to_impute[:, indices]
+            X_to_impute = self.X.copy()
+        X_to_impute = X_to_impute[:, indices]
         X_to_est = self.X[:, indices]
         Z_use = Z[:, indices]
         X_imp = X_to_impute.copy()
@@ -126,6 +141,26 @@ class TransformFunction():
     def _latent_to_obs_cont(self, x_obs, z_latent, x_to_impute=None, inverse_cdf_type='empirical', weights = None):
         '''
         Transform latent to observed for a single variable
+
+        Parameters
+        ----------
+            x_obs: array-like of shape (nsamples, )
+                The stored observed variable, used for marginal estimation
+            z_latent: array-like of shape (nsamples, )
+                The latent vector to be transformed into the observed space 
+            x_to_impute: array-like of shape (nsamples, ) or None 
+                Used to indicate the locations to be kept. 
+                z_latent will only be transformed into the observed space at the missing entries of x_to_impute
+                If none, set to x_obs. 
+
+        Returns
+        -------
+            x_imp: array-like of shape (nsamples, )
+                The completed vector.
+                At the observed entries of x_to_impute, x_imp agrees with x_to_impute.
+                At the missing entries of x_to_impute, x_imp is transformed from z_latent
+
+        """
         '''
         if x_to_impute is None:
             x_to_impute = x_obs
@@ -203,9 +238,7 @@ class TransformFunction():
                 lower, upper = func(x-threshold), func(x+threshold)
                 lower, upper = norm.ppf(lower), norm.ppf(upper)
             else:
-                print("Some ordinal variable has only a single level")
-                lower = np.ones_like(x) - np.inf
-                upper = np.ones_like(x) + np.inf
+                raise ValueError("Some ordinal variable has only a single level")
             return lower, upper
 
         if cdf_type in ['empirical','poisson']:
