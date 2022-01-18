@@ -214,72 +214,146 @@ def _prepare_quantity_GC(missing_indices, sigma):
 
     return out
 
-def _LRGC_em_row_step_body_(args):
+def _LRGC_latent_operation_body_(args):
     """
     Does a step of the EM algorithm, needed to dereference args to support parallelism
     """
-    return _LRGC_em_row_step_body(*args)
+    if isinstance(args[-1], dict):
+        return  _LRGC_latent_operation_body(*args[:-1], **args[-1])
+    else:
+        return _LRGC_latent_operation_body(*args)
 
-def _LRGC_em_row_step_body(Z, r_lower, r_upper, U, d, sigma, num_ord_updates, ord_indices):
-    """
-    Iterate the rows over provided matrix 
-    """
+def _LRGC_latent_operation_body(task, Z, r_lower, r_upper, U, d, sigma, num_ord_updates, ord_indices, has_truncation, **kwargs):
+    '''
+    Args:
+        task: str in ['em', 'fillup', 'sample']
+    Returns:
+        out_dict:
+            If task == 'em', 
+                out_dict has keys ['Z', 'var_ordinal', 'loglik', 'A', 's', 'ss', 'zobs_norm'].
+            If task == 'fillup',
+                out_dict has keys ['var_ordinal', 'Z_imp'].
+            If task == 'sample',
+                out_dict has keys ['Z_imp_sample']
+    '''
+    #print(Z.shape)
     n, p = Z.shape
     rank = U.shape[1]
 
-    A = np.zeros((n, rank, rank))
-    SS = np.copy(A)
-    S = np.zeros((n,rank))
-    C_ord = np.zeros((n,p))
-    trunc_warn = False
-    loglik = 0
-    s = 0
+    out_dict = {}
+    trunc_warn = 0
 
-    for i in range(n):
-        zi, Ai, si, ssi, c_ordinal, _loglik, _s, warn = _LRGC_em_row_step_body_row(Z[i,:], r_lower[i,:], r_upper[i,:], U, d, sigma, num_ord_updates, ord_indices)
-        Z[i] = zi
-        A[i] = Ai
-        S[i] = si
-        SS[i] = ssi
-        C_ord[i] = c_ordinal
-        loglik += _loglik
-        s += _s
-        trunc_warn = trunc_warn or warn
-    if trunc_warn:
-        print('Bad truncated normal stats appear, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
-    return Z, A, S, SS, C_ord, loglik, s
+    if task == 'em':
+        out_dict['Z'] = Z
+        out_dict['var_ordinal'] = np.zeros((n,p))
+        out_dict['loglik'] = 0
+        out_dict['A'] = np.zeros((n, rank, rank))
+        out_dict['s'] = np.zeros((n, rank))
+        out_dict['ss'] = np.zeros((n, rank, rank))
+        out_dict['zobs_norm'] = 0
+    elif task == 'fillup':
+        out_dict['Z_imp'] = Z.copy()
+        out_dict['var_ordinal'] = np.zeros((n,p))
+    elif task == 'sample':
+        try:
+            num = kwargs['num']
+            seed = kwargs['seed']
+        except KeyError:
+            print('Additional arguments of num and seed need to be provided to sample latent row')
+            raise 
+        out_dict['Z_imp_sample'] = np.empty((n,p,num))
+    else:
+        print(f'invalid task type: {task}')
+        raise 
 
+    for i, Z_row in enumerate(Z):
+        if has_truncation:
+            false_ord = np.isclose(r_lower[i], r_upper[i]) 
+            true_ord = ~false_ord
+            # adjust r_lower and r_upper
+            r_lower_row, r_upper_row = r_lower[i][true_ord], r_upper[i][true_ord]
+            # adjust ord_indices
+            ord_indices_input = ord_indices.copy()
+            int_ord_indices = np.flatnonzero(ord_indices)
+            ord_indices_input[int_ord_indices[false_ord]] = False
+        else:
+            r_lower_row, r_upper_row = r_lower[i], r_upper[i]
+            ord_indices_input = ord_indices
 
-def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num_ord_updates, ord_indices):
+        row_out_dict = _LRGC_latent_operation_row(task, Z_row, r_lower_row, r_upper_row, U, d, sigma, num_ord_updates, ord_indices_input, **kwargs)
+        trunc_warn += row_out_dict['truncnorm_warn']
+        if task == 'em':
+            for key in ['Z', 'var_ordinal', 'A', 's', 'ss']:
+                out_dict[key][i] = row_out_dict[key]
+            for key in ['loglik', 'zobs_norm']:
+                out_dict[key] += row_out_dict[key]
+        elif task == 'fillup':
+            for key in ['Z_imp', 'var_ordinal']:
+                out_dict[key][i] = row_out_dict[key]
+        elif task == 'sample':
+            missing_indices = np.isnan(Z_row)
+            if any(missing_indices):
+                out_dict['Z_imp_sample'][i, missing_indices, :] = row_out_dict['Z_imp_sample']
+        else:
+            pass
+
+    if trunc_warn>0:
+        print(f'Bad truncated normal stats appear {trunc_warn} times, suggesting the existence of outliers. We skipped the outliers now. More stable version to come...')
+
+    return out_dict
+
+def _LRGC_latent_operation_row(task, Z_row, r_lower_row, r_upper_row, U, d, sigma, num_ord_updates, ord_indices, **kwargs):
     '''
-    Computation complexity: |O_i|k^2 + k^3
+    Args:
+        task: str in ['em', 'fillup', 'sample']
+    Returns:
+        out_dict:
+            If task == 'em', 
+                out_dict has keys ['truncnorm_warn', 'Z', 'var_ordinal', 'loglik', 'A', 's', 'ss', 'zobs_norm'].
+            If task == 'fillup',
+                out_dict has keys ['truncnorm_warn', 'var_ordinal', 'Z_imp'].
+            If task == 'sample',
+                out_dict has keys ['truncnorm_warn', 'Z_imp_sample']
     '''
+    if task == 'sample':
+        try:
+            num = kwargs['num']
+            seed = kwargs['seed']
+        except KeyError:
+            print('Additional arguments of num and seed need to be provided to sample latent row')
+            raise 
+    out_dict = {'truncnorm_warn':False}
+
     p, rank = U.shape
     missing_indices = np.isnan(Z_row)
     obs_indices = ~missing_indices
+    # special cases
+    if task == 'sample' and all(obs_indices):
+        out_dict['Z_imp_sample'] = None
+        return out_dict
     ord_obs_indices = ord_indices & obs_indices
     
     # Ui_obs: |O_i| * k
     Ui_obs = U[obs_indices,:]
-    # (1) matrix multiplication, |O_i|k^2 
+    # matrix multiplication, |O_i|k^2 
     # UU_obs: k by k
     UU_obs = np.dot(Ui_obs.T, Ui_obs) 
 
     # used in both ordinal and factor block
-    # (2) linear system, k^3+|O_i|k^2 
+    # linear system, k^3+|O_i|k^2 
     res = np.linalg.solve(UU_obs + sigma * np.diag(1.0/np.square(d)), np.concatenate((np.identity(rank), Ui_obs.T),axis=1))
     # Ai: k by k
     Ai = res[:,:rank]
     # AU: k by |O_i|
     AU = res[:,rank:]
 
-    # (3) Each execution: k|O_i|
+    # Each execution: k|O_i|
     sigma_obs_obs_inv_Zobs_row_func = lambda z_obs, U_obs=Ui_obs, AU=AU, sigma=sigma: (z_obs - np.dot(U_obs, np.dot(AU, z_obs)))/sigma
-    # (4) |O_i|*k^2
+    # |O_i|*k^2
     sigma_obs_obs_inv_diag = (1 - np.einsum('ij, jk, ki -> i', Ui_obs, Ai, Ui_obs.T))/sigma
 
     zi_obs = Z_row[obs_indices]
-    # (5) p_ord + k|O_i|
+    # p_ord + k|O_i|
     Z_row, var_ordinal, truncnorm_warn = _update_z_row_ord(z_row=Z_row, 
                                                            r_lower_row=r_lower_row, 
                                                            r_upper_row=r_upper_row, 
@@ -291,20 +365,40 @@ def _LRGC_em_row_step_body_row(Z_row, r_lower_row, r_upper_row, U, d, sigma, num
                                                            ord_in_obs = ord_obs_indices[obs_indices],
                                                            obs_in_ord = ord_obs_indices[ord_indices]
                                                            )
+    out_dict['truncnorm_warn'] = truncnorm_warn
     
     zi_obs = Z_row[obs_indices] 
-    # (6) k|O_i| + k^2|O_i| + k^2 = k^2|O_i|
     si = np.dot(AU, zi_obs)
-    ssi = np.dot(AU * var_ordinal[obs_indices], AU.T) + np.outer(si, si.T)
 
-    num_obs = obs_indices.sum()
-    negloglik = p*np.log(2*np.pi)
-    negloglik += np.log(sigma) * (num_obs-rank) + np.linalg.slogdet(np.identity(rank) * sigma + np.power(d,2) * UU_obs)[1]
-    negloglik += (np.sum(zi_obs**2) - np.dot(zi_obs.T, np.dot(Ui_obs, si)))/sigma
-    loglik = -negloglik/2.0
+    if task == 'fillup':
+        out_dict['var_ordinal'] = var_ordinal
+        out_dict['Z_imp'] = np.dot(U[missing_indices,:], si)
+    elif task == 'sample':
+        np.random.seed(seed)
+        Ui_mis = U[missing_indices,:]
+        cond_mean = np.dot(Ui_mis, si)
+        p_mis = Ui_mis.shape[0]
+        cond_cov = sigma * (np.identity(p_mis) + np.matmul(np.matmul(Ui_mis, Ai), Ui_mis.T))
+        Z_imp_num = np.random.multivariate_normal(mean=cond_mean, cov=cond_cov, size=num)
+        # Z_imp_num has shape (n_mis, num)
+        Z_imp_num = Z_imp_num.T
+        out_dict['Z_imp_sample'] = Z_imp_num
+    else:
+        out_dict['var_ordinal'] = var_ordinal
+        out_dict['Z'] = Z_row
+        out_dict['A'] = Ai
+        out_dict['s'] = si
+        # k|O_i| + k^2|O_i| + k^2 = k^2|O_i|
+        out_dict['ss'] = np.dot(AU * var_ordinal[obs_indices], AU.T) + np.outer(si, si.T)
 
-    zi_obs_norm = np.power(zi_obs, 2).sum()
-    return Z_row, Ai, si, ssi, var_ordinal, loglik, zi_obs_norm, truncnorm_warn
+        num_obs = obs_indices.sum()
+        negloglik = p*np.log(2*np.pi)
+        negloglik += np.log(sigma) * (num_obs-rank) + np.linalg.slogdet(np.identity(rank) * sigma + np.power(d,2) * UU_obs)[1]
+        negloglik += (np.sum(zi_obs**2) - np.dot(zi_obs.T, np.dot(Ui_obs, si)))/sigma
+        out_dict['loglik'] = -negloglik/2.0
+        out_dict['zobs_norm'] = np.power(zi_obs, 2).sum()
+  
+    return out_dict
 
 
 def _LRGC_em_col_step_body_(args):

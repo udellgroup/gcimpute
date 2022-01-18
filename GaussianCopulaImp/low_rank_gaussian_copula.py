@@ -1,6 +1,6 @@
 from .transform_function import TransformFunction
 from .gaussian_copula import GaussianCopula
-from .embody import _LRGC_em_col_step_body_, _LRGC_em_row_step_body_
+from .embody import _LRGC_em_col_step_body_, _LRGC_latent_operation_body_
 from scipy.stats import norm, truncnorm
 import numpy as np
 import warnings
@@ -255,16 +255,30 @@ class LowRankGaussianCopula(GaussianCopula):
         num_ord = r_lower.shape[1]
         U,d,V = np.linalg.svd(W, full_matrices=False)
 
+        out_dict = {}
+        out_dict['var_ordinal'] = np.zeros((n,p))
+        out_dict['Z'] = Z
+        out_dict['loglik'] = 0
+        out_dict['A'] = np.zeros((n, rank, rank))
+        out_dict['s'] = np.zeros((n, rank))
+        out_dict['ss'] = np.zeros((n, rank, rank))
+        out_dict['zobs_norm'] = 0
+
+        has_truncation = self.has_truncation()
         if max_workers == 1:
-            args = (Z, r_lower, r_upper, U, d, sigma, num_ord_updates, self._ord_indices)
-            Z, A, S, SS, C_ord, loglik, s_row = _LRGC_em_row_step_body_(args)
-            args = (Z, C_ord, U, sigma, A, S, SS)
+            args = ('em', Z, r_lower, r_upper, U, d, sigma, num_ord_updates, self._ord_indices, has_truncation)
+            res_dict = _LRGC_latent_operation_body_(args)
+            for key in ['Z', 'var_ordinal', 'A', 's', 'ss']:
+                out_dict[key] = res_dict[key]
+            for key in ['loglik', 'zobs_norm']:
+                out_dict[key] += res_dict[key]
+            args = (out_dict['Z'], out_dict['var_ordinal'], U, sigma, out_dict['A'], out_dict['s'], out_dict['ss'])
             W_new, s_col = _LRGC_em_col_step_body_(args)
         else:
             # computation across rows
             divide = n/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
-            args = [(
+            args = [('em',
                     Z[divide[i]:divide[i+1]].copy(), 
                     r_lower[divide[i]:divide[i+1]], 
                     r_upper[divide[i]:divide[i+1]], 
@@ -272,36 +286,28 @@ class LowRankGaussianCopula(GaussianCopula):
                     d, 
                     sigma, 
                     num_ord_updates,
-                    self._ord_indices
+                    self._ord_indices,
+                    has_truncation
                     ) for i in range(max_workers)]
-            A = np.zeros((n,rank,rank))
-            S = np.zeros((n,rank))
-            SS = np.zeros_like(A)
-            C_ord = np.zeros_like(Z)
-            loglik = 0
-            s_row = 0
             with ProcessPoolExecutor(max_workers=max_workers) as pool:
-                res = pool.map(_LRGC_em_row_step_body_, args)
-                for i,(zi, Ai, si, ssi, C_ord_i, loglik_i, s_row_i) in enumerate(res):
-                    Z[divide[i]:divide[i+1]] = zi
-                    A[divide[i]:divide[i+1]] = Ai
-                    S[divide[i]:divide[i+1]] = si
-                    SS[divide[i]:divide[i+1]] = ssi
-                    C_ord[divide[i]:divide[i+1]] = C_ord_i
-                    loglik += loglik_i
-                    s_row += s_row_i
+                res = pool.map(_LRGC_latent_operation_body_, args)
+                for i, res_dict in enumerate(res):
+                    for key in ['Z', 'var_ordinal', 'A', 's', 'ss']:
+                        out_dict[key][divide[i]:divide[i+1]] = res_dict[key]
+                    for key in ['loglik', 'zobs_norm']:
+                        out_dict[key] += res_dict[key]
 
             # computation across columns
             divide = p/max_workers * np.arange(max_workers+1)
             divide = divide.astype(int)
             args = [(
-                    Z[:,divide[i]:divide[i+1]].copy(), 
-                    C_ord[:,divide[i]:divide[i+1]],
+                    out_dict['Z'][:,divide[i]:divide[i+1]].copy(), 
+                    out_dict['var_ordinal'][:,divide[i]:divide[i+1]],
                     U[divide[i]:divide[i+1]],
                     sigma,
-                    A, 
-                    S, 
-                    SS, 
+                    out_dict['A'], 
+                    out_dict['s'], 
+                    out_dict['ss'], 
                     ) for i in range(max_workers)]
             W_new = np.zeros_like(U)
             s_col = 0
@@ -311,23 +317,99 @@ class LowRankGaussianCopula(GaussianCopula):
                     W_new[divide[i]:divide[i+1]] = wnew_i
                     s_col += s_col_i
 
-        s = s_row+np.sum(C_ord)-s_col
+        C_ord = out_dict['var_ordinal']
+        Z = out_dict['Z']
+        s = out_dict['zobs_norm']+C_ord.sum()-s_col
         sigma_new = s/float(np.sum(~np.isnan(Z)))
         W_new = np.dot(W_new * d, V)
         W, sigma = self._scale_corr(W_new, sigma_new)
-        return W, sigma, Z, C_ord, loglik/n
+        loglik = out_dict['loglik']/n
+        return W, sigma, Z, C_ord, loglik
 
     def _sample_latent(self, Z, Z_ord_lower, Z_ord_upper, num, num_ord_updates=2):
         '''
         Specialized implementation for LRGC
         '''
-        raise NotImplementedError
+        n,p = Z.shape
+        W, sigma = self._W, self._sigma
+        max_workers = self._max_workers
+        num_ord_updates = self._num_ord_updates
+
+        rank = W.shape[1]
+        num_ord = r_lower.shape[1]
+        U,d,V = np.linalg.svd(W, full_matrices=False)
+
+        seed = self._sample_seed
+        additional_args = {'num':num, 'seed':seed}
+        self._sample_seed += 1
+
+        has_truncation = self.has_truncation()
+        if max_workers ==1:
+            args = ('sample', Z, Z_ord_lower, Z_ord_upper, U, d, sigma, num_ord_updates, self._ord_indices, has_truncation, additional_args)
+            res_dict = _LRGC_latent_operation_body_(args)
+            Z_imp_num = res_dict['Z_imp_sample']
+        else:
+            divide = n/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [('sample',
+                     Z[divide[i]:divide[i+1]].copy(), 
+                     Z_ord_lower[divide[i]:divide[i+1]], 
+                     Z_ord_upper[divide[i]:divide[i+1]], 
+                     U,
+                     d,
+                     sigma,
+                     num_ord_updates,
+                     self._ord_indices,
+                     has_truncation,
+                     additional_args
+                    ) for i in range(max_workers)]
+            Z_imp_num = np.empty((n,p,num))
+            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
+                res = pool.map(_LRGC_latent_operation_body_, args)
+                for i, res_dict in enumerate(res):
+                    Z_imp_num[divide[i]:divide[i+1],...] = res_dict['Z_imp_sample']
+        return Z_imp_num
 
     def _fillup_latent(self, Z, Z_ord_lower, Z_ord_upper, num_ord_updates=2):
         '''
         Specialized implementation for LRGC
         '''
-        raise NotImplementedError
+        n,p = Z.shape
+        W, sigma = self._W, self._sigma
+        max_workers = self._max_workers
+        num_ord_updates = self._num_ord_updates
+
+        rank = W.shape[1]
+        num_ord = r_lower.shape[1]
+        U,d,V = np.linalg.svd(W, full_matrices=False)
+
+        has_truncation = self.has_truncation()
+        if max_workers ==1:
+            args = ('fillup', Z, Z_ord_lower, Z_ord_upper, U, d, sigma, num_ord_updates, self._ord_indices, has_truncation)
+            res_dict = _LRGC_latent_operation_body_(args)
+            Z_imp, C_ord = res_dict['Z_imp'], res_dict['var_ordinal']
+        else:
+            divide = n/max_workers * np.arange(max_workers+1)
+            divide = divide.astype(int)
+            args = [('fillup',
+                     Z[divide[i]:divide[i+1]].copy(), 
+                     Z_ord_lower[divide[i]:divide[i+1]], 
+                     Z_ord_upper[divide[i]:divide[i+1]], 
+                     U,
+                     d,
+                     sigma,
+                     num_ord_updates,
+                     self._ord_indices,
+                     has_truncation,
+                    ) for i in range(max_workers)]
+            Z_imp = np.empty((n,p))
+            C_ord = np.empty((n,p))
+            with ProcessPoolExecutor(max_workers=max_workers) as pool: 
+                res = pool.map(_LRGC_latent_operation_body_, args)
+                for i, res_dict in enumerate(res):
+                    Z_imp[divide[i]:divide[i+1]] = res_dict['Z_imp']
+                    C_ord[divide[i]:divide[i+1]] = res_dict['var_ordinal']
+        return Z_imp, C_ord
 
     def _init_impute_svd(self, Z, rank, Z_ord_lower, Z_ord_upper):
         '''
