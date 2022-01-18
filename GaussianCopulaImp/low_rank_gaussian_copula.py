@@ -89,19 +89,23 @@ class LowRankGaussianCopula(GaussianCopula):
         '''
         Specialized implementation for LRGC
         '''
-        try:
-            Cord = self._latent_Cord
-        except AttributeError:
-            print(f'Cannot compute conditional std of missing entries before model fitting and imputation')
-            raise 
+        if Cord is None:
+            try:
+                Cord = self._latent_Cord
+            except AttributeError:
+                print(f'The model has not been fitted yet. Either fit the model first or supply Cord')
+                raise 
 
-        std_cond = np.zeros_like(self.transform_function.X)
-        obs_loc = ~np.isnan(self.transform_function.X)
+        if X is None:
+            X = self.transform_function.X
+
+        std_cond = np.zeros_like(X)
+        obs_loc = ~np.isnan(X)
         std_cond[obs_loc] = np.nan
 
         U,d,_ = np.linalg.svd(self._W, full_matrices=False)
 
-        for i,x_row in enumerate(self.transform_function.X):
+        for i,x_row in enumerate(X):
             missing_indices = np.isnan(x_row)
             obs_indices = ~missing_indices
 

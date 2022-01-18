@@ -5,6 +5,7 @@ def _latent_operation_body_(args):
     """
     Dereference args to support parallelism
     """
+    # if the last element in args is a dict, then it is the dict with additional keyword arguments
     if isinstance(args[-1], dict):
         return  _latent_operation_body(*args[:-1], **args[-1])
     else:
