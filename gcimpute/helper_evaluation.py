@@ -1,6 +1,9 @@
 import numpy as np 
 from scipy.stats import random_correlation, norm, expon
 from scipy.linalg import svdvals
+import warnings
+warnings.filterwarnings("error")
+from collections import defaultdict
 
 def get_mae(x_imp, x_true, x_obs=None):
     """
@@ -20,6 +23,19 @@ def get_mae(x_imp, x_true, x_obs=None):
 def get_rmse(x_imp, x_true, x_obs = None, relative=False):
     """
     gets Root Mean Squared Error (RMSE) or Normalized Root Mean Squared Error (NRMSE) between x_imp and x_true
+
+    Parameters
+    ----------
+    x_imp : array-like of shape (nsamples, nfeatures)
+        Imputed complete matrix
+    x_true : array-like of shape (nsamples, nfeatures)
+        True matrix. Can be incomplete
+    x_obs : array-like of shape (nsamples, nfeatures) or None
+        Observed incomplete matrix.
+        The evaluation entries are those observed in x_true but not in x_obs
+        If None, evaluation entries are those observed in x_true.
+    relative : bool, default=False
+        Return NRMSE if True and RMSE if False
     """
     x_imp = np.asarray(x_imp)
     x_true = np.asarray(x_true)
@@ -72,17 +88,21 @@ def get_smae(x_imp, x_true, x_obs,
         base_diff = np.abs(base_imp - x_true_col)
         error[i,0] = np.sum(diff)
         error[i,1] = np.sum(base_diff)
-        if error[i,1] == 0:
-            print(f'Baseline imputation achieves zero imputation error in variable {i+1}.') 
-            print(f'The {sum(test)} true values range from {x_true_col.min()} (min) to {x_true_col.max()} (max).')
-            error[i,1] = np.nan
 
     if per_type:
         scaled_diffs = {}
         for name, val in var_types.items():
-            scaled_diffs[name] = np.sum(error[name,0])/np.sum(error[name,1])
+            try:
+                scaled_diffs[name] = np.sum(error[val,0])/np.sum(error[val,1])
+            except RuntimeWarning:
+                print(f'Baseline imputation achieves zero imputation error in some variable.') 
+                raise
     else:
-        scaled_diffs = error[:,0] / error[:,1]
+        try:
+            scaled_diffs = error[:,0] / error[:,1]
+        except RuntimeWarning: 
+            print(f'Baseline imputation achieves zero imputation error in some variable.') 
+            raise
 
     return scaled_diffs
 
@@ -107,23 +127,18 @@ def get_smae_batch(x_imp, x_true, x_obs,
     x_imp = np.asarray(x_imp)
     x_true = np.asarray(x_true)
     x_obs = np.asarray(x_obs)
-    
-    result = []
+
+    result = defaultdict(list) if per_type else []
     baseline = np.nanmedian(x_obs,0) if baseline is None else baseline
     for imp, true, obs in zip(batch_iterable(x_imp,batch_size), batch_iterable(x_true,batch_size), batch_iterable(x_obs,batch_size)):
-        scaled_diffs = get_smae(imp, true, obs, baseline=baseline, per_type=False)
-        result.append(scaled_diffs)
-    result = np.array(result)
+        scaled_diffs = get_smae(imp, true, obs, baseline=baseline, per_type=per_type)
+        if per_type:
+            for name, val in scaled_diffs.items():
+                result[name].append(val)
+        else:
+            result.append(scaled_diffs)
 
-    if per_type:
-        scaled_diffs = {}
-        for name, val in var_types.items():
-            if len(val)>0:
-                scaled_diffs[name] = np.nanmean(result[:,val], axis=1)
-    else:
-        scaled_diffs = result
-
-    return scaled_diffs
+    return result
 
 def get_scaled_error(sigma_imp, sigma):
     """

@@ -1,4 +1,4 @@
-# GaussianCopulaImp
+# gcimpute
 This package provides a python implemention to fit a Gaussian copula model, on continuous, ordinal and binary mixed data with missing values. The user could either fit a full rank Gaussian copula model [1] or a low rank Gaussian copula model [2], which builds upon the PPCA model in a latent space. The package also includes the mini-batch and online implementation of the full rank Gaussian copula model [3], which can accelerate the training process and adapt to a changing distribution in the streaming data. The fitted model can be used for missing value imputation, latent correlation learning and latent correlation change detection.
 
 ## Installation
@@ -6,7 +6,7 @@ This package provides a python implemention to fit a Gaussian copula model, on c
 The easiest way is to install using pip: 
 
 `
-pip install GaussianCopulaImp
+pip install gcimpute
 ` 
 
 If you want to customize the source code, you may install in the editable mode by first `git clone` this respository, and then do
@@ -48,10 +48,10 @@ For both **minibatch offline training** and **minibatch online training**, the g
 
 ## Examples 
 ```python
-from GaussianCopulaImp.gaussian_copula import GaussianCopula
-from GaussianCopulaImp.helper_data import generate_mixed_from_gc
-from GaussianCopulaImp.helper_evaluation import get_smae
-from GaussianCopulaImp.helper_mask import mask_types
+from gcimpute.gaussian_copula import GaussianCopula
+from gcimpute.helper_data import generate_mixed_from_gc
+from gcimpute.helper_evaluation import get_smae
+from gcimpute.helper_mask import mask_types
 import numpy as np
 seed = 101
 

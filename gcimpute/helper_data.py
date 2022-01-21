@@ -1,6 +1,6 @@
 import numpy as np 
 from scipy.stats import random_correlation, norm, expon
-import pkg_resources
+from importlib_resources import files
 import pandas as pd
 
 def _cont_to_ord(x, k, rng, by = 'dist', qmin=0.05, qmax=0.95):
@@ -135,8 +135,8 @@ def load_GSS(cols = 'tutorial', to_array = False, flipping = True):
     '''
     Return a subset of General social survey (GSS) datasets selected in year 2014, consisting of 18 variables and 2538 subjects.
     '''
-    stream = pkg_resources.resource_stream(__name__, 'data/GSS_2014_18var.csv')
-    data = pd.read_csv(stream, index_col=0)
+    with files('gcimpute').joinpath('data/GSS_2014_18var.csv') as fp:
+        data = pd.read_csv(fp, index_col=0)
     data.rename(columns={'CLASS_':'CLASS'}, inplace=True)
     # flip integer codes in some variables so that higher integers always mean higher 'degree'
     # for example, originally small values of STRESS mean more severe STRESS. We flip the integer values so that
@@ -167,8 +167,8 @@ def load_GSS(cols = 'tutorial', to_array = False, flipping = True):
 
 def load_movielens1m(num = 150, min_obs = 2, verbose = False):
     assert num <= 501
-    stream = pkg_resources.resource_stream(__name__, 'data/movielens1m_top501.csv')
-    data = pd.read_csv(stream, index_col=0).to_numpy()
+    with files('gcimpute').joinpath('data/movielens1m_top501.csv') as fp:
+        data = pd.read_csv(fp, index_col=0).to_numpy()
     # select columns
     thre = np.sort(np.isnan(data).mean(axis=0))[num-1]
     index = np.isnan(data).mean(axis=0) <= thre
@@ -184,12 +184,12 @@ def load_movielens1m(num = 150, min_obs = 2, verbose = False):
 
 
 def load_FRED():
-    stream = pkg_resources.resource_stream(__name__, 'data/FRED_selected.csv')
-    data = pd.read_csv(stream, index_col=0)
+    with files('gcimpute').joinpath('data/FRED_selected.csv') as fp:
+        data = pd.read_csv(fp, index_col=0)
     data.index = pd.to_datetime(data.index)
     return data
 
 def load_whitewine():
-    stream = pkg_resources.resource_stream(__name__, 'data/winequality-white.csv')
-    data = pd.read_csv(stream, sep=';')
+    with files('gcimpute').joinpath('data/winequality-white.csv') as fp:
+        data = pd.read_csv(fp, sep=';')
     return data

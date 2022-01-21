@@ -5,10 +5,27 @@ from functools import partial
 from .marginal_imputation import *
 
 class TransformFunction():
+    '''
+    Transformation operation.
+    This class performs transformation between the observed space and the latent space.
+
+    Parameters
+    ----------
+    X: array-like of shape (nsamples, nfeatures)
+        Input data, used to estimate the desired transformation
+    cont_indices: array-like of shape (nfeatures,)
+        Each entry is bool: indicating whether the corresponding variable is continuous
+    ord_indices: array-like of shape (nfeatures,)
+        Must be ~cont_indices
+    cdf_types: array-like of shape (nfeatures,)
+        Each entry is str in {'empirical', 'poisson', 'lower_truncated', 'upper_truncated', 'twosided_truncated'}.
+        Indicate the estimation strategy for the empirical CDF
+    inverse_cdf_types: array-like of shape (nfeatures,)
+        Each entry is str in {'empirical', 'poisson', 'lower_truncated', 'upper_truncated', 'twosided_truncated'}.
+        Indicate the estimation strategy for the empirical quantile
+    '''
+    
     def __init__(self, X, cont_indices, ord_indices, cdf_types, inverse_cdf_types):
-        '''
-        This class performs transformation between the observed space and the latent space.
-        '''
         self.X = X
         self.ord_indices = ord_indices
         self.cont_indices = cont_indices

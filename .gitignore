@@ -17,3 +17,5 @@ dis*
 *__pycache__*
 *.egg*
 evaluation/.DS_Store
+tests/
+testvenv/
