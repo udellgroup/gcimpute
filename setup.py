@@ -23,6 +23,7 @@ setup(
         'tqdm',
         'importlib_resources'
     ],
-    #include_package_data=True,
+    include_package_data=True,
     package_data = {'gcimpute':['data/*.csv']},
+    license = 'MIT'
 )

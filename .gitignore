@@ -19,3 +19,4 @@ dis*
 evaluation/.DS_Store
 tests/
 testvenv/
+MANIFEST.in
