@@ -1,12 +1,11 @@
 Examples/.ipynb_checkpoints/
-Examples/sanity_check.py
 Examples/test*.ipynb
 Examples/*.py
 Examples/*.pdf
 Examples/*.pickle
 Examples/*.txt
 Examples/*.sh
-myvenv/
+Development_tests/
 GaussianCopulaImp/.DS_Store
 .DS_Store
 .vs*

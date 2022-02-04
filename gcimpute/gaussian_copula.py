@@ -38,6 +38,10 @@ class GaussianCopula():
         The number of jobs to run in parallel.
     verbose: int, default=0
         Controls the verbosity when fitting and predicting. 
+        0 : silence
+        1 : information
+        2 : rich information
+        3 : debugging
     num_ord_updates: int, default=1
         Number of steps to take when approximating the mean and variance of the latent variables corresponding to ordinal dimensions.
         We do not recommend using value larger than 1 (the default value) at this moment. It will slow the speed without clear 
@@ -1126,6 +1130,10 @@ class GaussianCopula():
         C_ord = out_dict['var_ordinal']
         sigma = np.cov(Z_imp, rowvar=False) + C 
         try:
+            if self._verbose>=3:
+                _diag = np.diag(sigma)
+                _max, _min = _diag.max(), _diag.min()
+                print(f'The estimated covariance values has min {_min:.3f} and max {_max:.3f}')
             sigma = self._project_to_correlation(sigma)
         except ZeroDivisionError:
             print("unexpected zero covariance for the latent Z")
