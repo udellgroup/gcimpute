@@ -86,9 +86,12 @@ def _latent_operation_body(task, Z, r_lower, r_upper, sigma, num_ord_updates, or
 
 def _latent_operation_row(task, Z_row, r_lower_row, r_upper_row, sigma, num_ord_updates, ord_indices, **kwargs):
     '''
-    Args:
+    Arguments
+    ---------
         task: str in ['em', 'fillup', 'sample']
-    Returns:
+
+    Returns
+    -------
         out_dict:
             If task == 'em', 
                 out_dict has keys ['truncnorm_warn', 'Z', 'var_ordinal', 'Z_imp', 'loglik', 'C'].
@@ -96,6 +99,13 @@ def _latent_operation_row(task, Z_row, r_lower_row, r_upper_row, sigma, num_ord_
                 out_dict has keys ['truncnorm_warn', 'var_ordinal', 'Z_imp'].
             If task == 'sample',
                 out_dict has keys ['truncnorm_warn', 'Z_imp_sample']
+
+            var_ordinal: array of shape (n_features,)
+                The conditional variance due to truncation, i.e. E(z|a < z < b).
+                Zero at continuous entries, nonzero at ordinal entries
+
+            C: array of shape (n_features, n_features)
+                The conditional co-variance due to missingness, i.e. E(z_i z_j) where both of z_i, z_j may be observed or missing 
     '''
     if task == 'sample':
         try:
@@ -304,9 +314,12 @@ def _LRGC_latent_operation_body(task, Z, r_lower, r_upper, U, d, sigma, num_ord_
 
 def _LRGC_latent_operation_row(task, Z_row, r_lower_row, r_upper_row, U, d, sigma, num_ord_updates, ord_indices, **kwargs):
     '''
-    Args:
+    Arguments
+    ---------
         task: str in ['em', 'fillup', 'sample']
-    Returns:
+
+    Returns
+    -------
         out_dict:
             If task == 'em', 
                 out_dict has keys ['truncnorm_warn', 'Z', 'var_ordinal', 'loglik', 'A', 's', 'ss', 'zobs_norm'].
@@ -314,6 +327,12 @@ def _LRGC_latent_operation_row(task, Z_row, r_lower_row, r_upper_row, U, d, sigm
                 out_dict has keys ['truncnorm_warn', 'var_ordinal', 'Z_imp'].
             If task == 'sample',
                 out_dict has keys ['truncnorm_warn', 'Z_imp_sample']
+
+            var_ordinal: array of shape (n_features,)
+                The conditional variance due to truncation, i.e. E(z|a < z < b).
+                Zero at continuous entries, nonzero at ordinal entries
+
+
     '''
     if task == 'sample':
         try:
@@ -446,11 +465,18 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
     where M1 denotes the computation of executing sigma_obs_obs_inv_Zobs_row_func once, 
     and M2 denotes the computation of evaluating a truncated normal stats
 
-    Args:
+    Arguments
+    ---------
         sigma_obs_obs_inv_Zobs_row_func: A function that takes z_obs (array like of shape (n_obs, )) as input and return sigma_obs_obs_inv_Zobs_row (array like of shape (n_obs, ))  as output
             The matrix-vector product Sigma_{obs, obs}^{-1} * z_{obs}
         sigma_obs_obs_inv_diag: array of shape (nobs, )
             The diagonal of Sigma_{obs, obs}^{-1} 
+
+    Returns
+    -------
+        var_ordinal: array of shape (n_features,)
+            The conditional variance due to truncation, i.e. E(z|a < z < b).
+            Zero at continuous entries, nonzero at ordinal entries
     '''
     p, num_ord = z_row.shape[0], r_upper_row.shape[0]
     var_ordinal = np.zeros(p)

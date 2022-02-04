@@ -1128,12 +1128,21 @@ class GaussianCopula():
         Z_imp = out_dict['Z_imp']
         C = out_dict['C']
         C_ord = out_dict['var_ordinal']
-        sigma = np.cov(Z_imp, rowvar=False) + C 
         try:
+            # the estimated covariance converges to 1
+            # if n is large enough, an alternative update rule as below is also plausible
+            # >>> sigma = np.cov(Z_imp, rowvar=False) + C
+            # >>> np.fill_diagonal(sigma, 1)
+            # however, when n is small, the above update rule is not robust: the updated sigma may fail to be positive definite
+            # Consequently, it easily fails in minibatch and online training mode
+            # The current updating rule is more robust 
+            sigma = np.cov(Z_imp, rowvar=False) + C 
+
             if self._verbose>=3:
                 _diag = np.diag(sigma)
                 _max, _min = _diag.max(), _diag.min()
                 print(f'The estimated covariance values has min {_min:.3f} and max {_max:.3f}')
+
             sigma = self._project_to_correlation(sigma)
         except ZeroDivisionError:
             print("unexpected zero covariance for the latent Z")
