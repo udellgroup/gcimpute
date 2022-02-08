@@ -3,6 +3,8 @@ from statsmodels.distributions.empirical_distribution import ECDF
 from scipy.stats import norm, poisson
 from functools import partial
 from .marginal_imputation import *
+#import warnings
+#warnings.filterwarnings("error")
 
 class TransformFunction():
     '''
@@ -150,7 +152,27 @@ class TransformFunction():
         upper = np.empty_like(x_to_transform)
         missing = np.isnan(x_to_transform)
         f_marginal = self._marginal_ord_est(x_obs = x_obs, cdf_type=cdf_type)
-        lower[~missing], upper[~missing] = f_marginal(x_to_transform[~missing])
+        l, u = f_marginal(x_to_transform[~missing])
+
+        if (u-l).min()<=0:
+            print('Invalid lower & upper bounds for ordinal')
+            loc = np.argmin(u-l)
+            print(f'Min of upper - lower: {u[loc]-l[loc]:.3f}')
+            print(f'where upper is {u[loc]:.3f} and lower is {l[loc]:.3f}')
+            print('The empirical observations: ')
+            print(x_obs)
+            raise ValueError
+
+#        try:
+#        except Exception as e:
+#            print(x_obs)
+#            print(x_to_transform[~missing])
+#            print(l)
+#            print(u)
+#            print(e)
+#            raise
+
+        lower[~missing], upper[~missing] = l, u
         lower[missing], upper[missing] = np.nan, np.nan
         return lower, upper
 
@@ -234,12 +256,13 @@ class TransformFunction():
 
     def _marginal_ord_est(self, x_obs, cdf_type='empirical'):
         x_obs = x_obs[~np.isnan(x_obs)]
-        unique = np.unique(x_obs)
-        l = len(x_obs)
-        assert l>0, 'Each variable must have at least one observation'
+        unique = np.sort(np.unique(x_obs))
+        _max, _min = unique[-1], unique[0]
+        assert _max > _min
+        assert len(unique)>1, 'Each ordinal variable must have at least two unique observations'
         if cdf_type == 'empirical':
             func = ECDF(x_obs)
-            threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0 if len(unique)>1 else 0
+            threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
         elif cdf_type == 'poisson':
             func = lambda x, mu=x_obs.mean(): poisson.cdf(x, mu = mu)
             # for count data, the corresponding latent interval will be shorter than ordinal treatment
@@ -250,12 +273,12 @@ class TransformFunction():
             raise NotImplementedError
 
         def marginal(x):
-            if len(unique)>1:
-                # from obs to scores
-                lower, upper = func(x-threshold), func(x+threshold)
-                lower, upper = norm.ppf(lower), norm.ppf(upper)
-            else:
-                raise ValueError("Some ordinal variable has only a single level")
+            # it may happen that some test points (x_to_transform) in ordinal variables do not appear in training points (x_obs)
+            x[x<_min] = _min
+            x[x>_max] = _max
+            # from obs to scores
+            lower, upper = func(x-threshold), func(x+threshold)
+            lower, upper = norm.ppf(lower), norm.ppf(upper)
             return lower, upper
 
         if cdf_type in ['empirical','poisson']:

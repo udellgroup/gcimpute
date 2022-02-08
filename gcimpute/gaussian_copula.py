@@ -1328,23 +1328,26 @@ class GaussianCopula():
             Z_ord : array-like of shape (nsamples, nfeatures_ordinal)
                 Samples drawn from gaussian truncated between Z_ord_lower and Z_ord_upper
         """
-        Z_ord = np.empty(Z_ord_lower.shape)
-        Z_ord[:] = np.nan
-
-        n, k = Z_ord.shape
+        Z_ord = Z_ord_lower.copy()
+        
         obs_indices = ~np.isnan(Z_ord_lower)
+        u_lower = norm.cdf(Z_ord_lower[obs_indices])
+        u_upper = norm.cdf(Z_ord_upper[obs_indices])
 
-        u_lower = np.copy(Z_ord_lower)
-        u_lower[obs_indices] = norm.cdf(Z_ord_lower[obs_indices])
-        u_upper = np.copy(Z_ord_upper)
-        u_upper[obs_indices] = norm.cdf(Z_ord_upper[obs_indices])
-        assert all(0<=u_lower[obs_indices]) and all(u_lower[obs_indices] <= u_upper[obs_indices]) and  all(u_upper[obs_indices]<=1)
-
-        for i in range(n):
-            for j in range(k):
-                if not np.isnan(Z_ord_upper[i,j]) and u_upper[i,j] > 0 and u_lower[i,j]<1:
-                    u_sample = self._rng.uniform(u_lower[i,j],u_upper[i,j])
-                    Z_ord[i,j] = norm.ppf(u_sample)
+        if (u_upper-u_lower).min()<=0:
+            loc = np.argmin(u_upper-u_lower)
+            print(f'Min of upper - lower: {u_upper[loc]-u_lower[loc]:.3f}')
+            print(f'where upper is {u_upper[loc]:.3f} and lower is {u_lower[loc]:.3f}')
+            raise ValueError('Invalid lower & upper bounds for ordinal')
+        if u_lower.min()<0:
+            print(f'Min of lower: {u_lower.min():.3f}')
+            raise ValueError('Invalid lower & upper bounds for ordinal')
+        if u_upper.max()>1:
+            print(f'Max of upper: {u_upper.max():.3f}')
+            raise ValueError('Invalid lower & upper bounds for ordinal')
+        
+        _score = self._rng.uniform(u_lower, u_upper)
+        Z_ord[obs_indices] = norm.ppf(_score)
         return Z_ord
 
     def _init_copula_corr(self, Z):

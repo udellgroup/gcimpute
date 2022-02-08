@@ -467,7 +467,9 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
 
     Arguments
     ---------
-        sigma_obs_obs_inv_Zobs_row_func: A function that takes z_obs (array like of shape (n_obs, )) as input and return sigma_obs_obs_inv_Zobs_row (array like of shape (n_obs, ))  as output
+        sigma_obs_obs_inv_Zobs_row_func: A function with (n_obs, ) narray-like input and (n_obs, ) narray-like output 
+            Input: z_obs 
+            Output: sigma_obs_obs_inv_Zobs_row 
             The matrix-vector product Sigma_{obs, obs}^{-1} * z_{obs}
         sigma_obs_obs_inv_diag: array of shape (nobs, )
             The diagonal of Sigma_{obs, obs}^{-1} 
