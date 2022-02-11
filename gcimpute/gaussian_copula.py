@@ -1,6 +1,6 @@
 from .transform_function import TransformFunction
 from .online_transform_function import OnlineTransformFunction
-from .embody import _latent_operation_body_
+from .embody import _latent_operation_body_, get_truncnorm_moments_vec
 from scipy.stats import norm, truncnorm
 import numpy as np
 import pandas as pd
@@ -469,7 +469,7 @@ class GaussianCopula():
             Z_cont = self.transform_function.get_cont_latent(X_to_transform=X)
             for i in range(num):
                 # Z_ord_lower and Z_ord_upper will be different across i
-                Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X, Z_cont=Z_cont)
+                Z, Z_ord_lower, Z_ord_upper = self._observed_to_latent(X_to_transform=X, Z_cont=Z_cont, method='sampling')
                 # TODO: complete Z
                 Z_imp = self._sample_latent(Z=Z, Z_ord_lower=Z_ord_lower, Z_ord_upper=Z_ord_upper, num=1, num_ord_updates=num_ord_updates) 
                 X_imp_num[...,i] = self._latent_to_imp(Z=Z_imp[...,0], X_to_impute=X)
@@ -841,7 +841,7 @@ class GaussianCopula():
                 updated copula correlation
         '''
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_batch)
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, method='univariate_mean')
         Z_cont = self.transform_function.get_cont_latent(X_to_transform=X_batch) 
         Z = np.empty_like(X_batch)
         Z[:, self._cont_indices] = Z_cont
@@ -941,7 +941,7 @@ class GaussianCopula():
             X_imp[:,self._ord_indices] = self.transform_function.impute_ord_observed(Z=Z, X_to_impute=X_to_impute)
         return X_imp
 
-    def _observed_to_latent(self, X_to_transform=None, Z_cont=None):
+    def _observed_to_latent(self, X_to_transform=None, Z_cont=None, method='univariate_mean'):
         '''
         Transform incomplete/complete data matrix X_to_transform to the latent Gaussian space.
 
@@ -965,7 +965,7 @@ class GaussianCopula():
         if Z_cont is None:
             Z_cont = self.transform_function.get_cont_latent(X_to_transform=X_to_transform)
         Z_ord_lower, Z_ord_upper = self.transform_function.get_ord_latent(X_to_transform=X_to_transform)
-        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper)
+        Z_ord = self._init_Z_ord(Z_ord_lower, Z_ord_upper, method=method)
         # Z = np.concatenate((Z_ord, Z_cont), axis=1)
         Z = np.empty_like(X_to_transform)
         Z[:, self.cont_indices] = Z_cont
@@ -1311,11 +1311,13 @@ class GaussianCopula():
                 std_cond[i, missing_indices] = np.sqrt(_var)
         return std_cond
 
-    def _init_Z_ord(self, Z_ord_lower, Z_ord_upper):
+    def _init_Z_ord(self, Z_ord_lower, Z_ord_upper, method='univariate_mean'):
         """
-        Initializes the observed latent ordinal values by sampling from a standard
-        Gaussian trucated to the inveral of Z_ord_lower, Z_ord_upper
-
+        Initializes the observed latent ordinal values by:
+            if method == 'sampling':
+                sampling from a standard Gaussian trucated to the inveral of Z_ord_lower, Z_ord_upper
+            if method == 'univariate_mean':
+                computing the mean of a standard Gaussian truncated to the inveral of Z_ord_lower, Z_ord_upper
         Parameters
         ----------
             Z_ord_lower : array-like of shape (nsamples, nfeatures_ordinal)
@@ -1346,8 +1348,15 @@ class GaussianCopula():
             print(f'Max of upper: {u_upper.max():.3f}')
             raise ValueError('Invalid lower & upper bounds for ordinal')
         
-        _score = self._rng.uniform(u_lower, u_upper)
-        Z_ord[obs_indices] = norm.ppf(_score)
+        if method == 'sampling':
+            _score = self._rng.uniform(u_lower, u_upper)
+            Z_ord[obs_indices] = norm.ppf(_score)
+        else:
+            alpha = Z_ord_lower[obs_indices]
+            beta = Z_ord_upper[obs_indices]
+            l = len(alpha)
+            out = get_truncnorm_moments_vec(alpha, beta, np.zeros(l), np.ones(l), mean_only=True)
+            Z_ord[obs_indices] = out['mean']
         return Z_ord
 
     def _init_copula_corr(self, Z):

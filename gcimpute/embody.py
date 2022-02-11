@@ -546,3 +546,62 @@ def get_truncnorm_moments(alpha,beta,mu,sigma,tol=1e-4):
     _var = (sigma**2) * (1 - r2 - (r1**2)) 
     return _mean, _var
 
+def get_truncnorm_moments_vec(alpha,beta,mu,sigma,tol=1e-4, mean_only=False):
+    alpha,beta,mu,sigma = np.array(alpha), np.array(beta), np.array(mu), np.array(sigma)
+
+    Z = norm.cdf(beta) - norm.cdf(alpha)
+    assert np.isfinite(Z).all(), f'Z is {Z}'
+    work_loc = np.flatnonzero((Z>tol) & (Z<1))
+    trivial_loc = Z==1
+    fail_loc = Z<=tol
+    Z_work = Z[work_loc]
+    mu_work = mu[work_loc]
+    sigma_work = sigma[work_loc]
+    beta_work, alpha_work = beta[work_loc], alpha[work_loc]
+
+    _mean = np.zeros_like(mu)
+    _var = np.zeros_like(mu)
+
+    out = {}
+
+    pdf_beta, pdf_alpha = norm.pdf(beta_work), norm.pdf(alpha_work)
+    assert np.isfinite(pdf_alpha).all(), f'pdf_alpha is {pdf_alpha}'
+    assert np.isfinite(pdf_beta).all(), f'pdf_beta is {pdf_beta}'
+    r1 = (pdf_beta - pdf_alpha) / Z_work
+    _mean[work_loc] = mu_work - r1 * sigma_work
+    _mean[fail_loc] = np.inf
+    _mean[trivial_loc] = mu[trivial_loc]
+    out['mean'] = _mean
+
+    # 
+    if not mean_only:
+        loc_dict = {}
+        r2_dict = {}
+
+        loc = beta_work >= np.inf
+        if any(loc):
+            assert np.isfinite(alpha_work[loc]).any(), f'alpha is {alpha_work[loc]} when beta is inf'
+            r2_dict['inf_beta'] = (-alpha_work[loc] * pdf_alpha[loc]) / Z_work[loc]
+            loc_dict['inf_beta'] = loc
+
+        loc = alpha_work <= -np.inf
+        if any(loc):
+            assert np.isfinite(beta_work[loc]).any(), f'alpha is {beta_work[loc]} when alpha is -inf'
+            r2_dict['inf_alpha'] = (beta_work[loc] * pdf_beta[loc]) / Z_work[loc]
+            loc_dict['inf_alpha'] = loc
+
+        if any(loc):
+            loc = (beta_work < np.inf) & (alpha_work > -np.inf)
+            r2_dict['finite'] = (beta_work[loc] * pdf_beta[loc] - alpha_work[loc] * pdf_alpha[loc]) / Z_work[loc]
+            loc_dict['finite'] = loc
+
+        for name, loc in loc_dict.items():
+            abs_loc = work_loc[loc]
+            if any(loc):
+                _var[abs_loc] = (sigma[abs_loc]**2) * (1 - r2_dict[name] - (r1[loc]**2))
+        _var[fail_loc] = np.inf
+        _var[trivial_loc] = sigma[trivial_loc]**2
+
+        out['var'] = _var
+    return out
+
