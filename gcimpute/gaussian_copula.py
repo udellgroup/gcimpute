@@ -1331,6 +1331,8 @@ class GaussianCopula():
                 Samples drawn from gaussian truncated between Z_ord_lower and Z_ord_upper
         """
         Z_ord = Z_ord_lower.copy()
+        if Z_ord_lower.shape[1] == 0:
+            return Z_ord
         
         obs_indices = ~np.isnan(Z_ord_lower)
         u_lower = norm.cdf(Z_ord_lower[obs_indices])
