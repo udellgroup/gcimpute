@@ -525,7 +525,7 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
                     truncnorm_warn = True
     return z_row, var_ordinal, truncnorm_warn
 
-def get_truncnorm_moments(alpha,beta,mu,sigma,tol=1e-4):
+def get_truncnorm_moments(alpha,beta,mu,sigma,tol=1e-6, mean_only=False):
     Z = norm.cdf(beta) - norm.cdf(alpha)
     assert np.isfinite(Z), f'Z is {Z}'
     if Z < tol:
@@ -535,6 +535,8 @@ def get_truncnorm_moments(alpha,beta,mu,sigma,tol=1e-4):
     assert np.isfinite(pdf_beta), f'pdf_beta is {pdf_beta}'
     r1 = (pdf_beta - pdf_alpha) / Z
     _mean = mu - r1 * sigma
+    if mean_only:
+        return _mean
     if beta >= np.inf:
         assert np.isfinite(alpha), f'alpha is {alpha} when beta is inf'
         r2 = (-alpha * pdf_alpha) / Z
@@ -546,11 +548,11 @@ def get_truncnorm_moments(alpha,beta,mu,sigma,tol=1e-4):
     _var = (sigma**2) * (1 - r2 - (r1**2)) 
     return _mean, _var
 
-def get_truncnorm_moments_vec(alpha,beta,mu,sigma,tol=1e-4, mean_only=False):
+def get_truncnorm_moments_vec(alpha,beta,mu,sigma,tol=1e-6, mean_only=False):
     alpha,beta,mu,sigma = np.array(alpha), np.array(beta), np.array(mu), np.array(sigma)
 
     Z = norm.cdf(beta) - norm.cdf(alpha)
-    assert np.isfinite(Z).all(), f'Z is {Z}'
+    assert np.isfinite(Z).all() and Z.min()>=0, f'Z is {Z}'
     work_loc = np.flatnonzero((Z>tol) & (Z<1))
     trivial_loc = Z==1
     fail_loc = Z<=tol
