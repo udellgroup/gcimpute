@@ -45,7 +45,7 @@ More detailed examples are available under directory Examples. Especially, the [
 ## News
 *02-13-2022*
 
-Our software went through a few name and structural changes. It was previously named online_gc_imp, and then GaussianCopulaImp. The current name gcimpute is our final pick. It is very unlikely we will further change its name. The structural changes are substantial: we improved the code quality and the user interface. It now has an interface consistent with `sklearn.impute`. If you are an early user of our software, you may find your codes using our software no longer works if using our new release. We greatly appreciate your interest in our work and sincerely apologize for any inconvenience you may experience. The [notebook](https://github.com/udellgroup/gcimpute/blob/master/Examples/Main_Tutorial.ipynb) will help you quickly modify your codes using our current release.
+Our software went through a few name and structural changes. It was previously named *online_gc_imp* and then *GaussianCopulaImp*. The current name *gcimpute* is our final pick. The structural changes are substantial: we improved the code quality and the user interface. It now has an interface consistent with `sklearn.impute`. If you are an early user of our software, you may find your codes using our software no longer work after updating to our current release. We greatly appreciate your interest in our work and sincerely apologize for any inconvenience you may experience. The [notebook](https://github.com/udellgroup/gcimpute/blob/master/Examples/Main_Tutorial.ipynb) will help you quickly modify your codes to use our current release.
 
 ## References
 [1] Zhao, Y. and Udell, M. Missing value imputation for mixed data via Gaussian copula, KDD 2020.
