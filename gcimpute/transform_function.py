@@ -3,6 +3,7 @@ from statsmodels.distributions.empirical_distribution import ECDF
 from scipy.stats import norm, poisson
 from functools import partial
 from .marginal_imputation import *
+from bisect import bisect
 #import warnings
 #warnings.filterwarnings("error")
 
@@ -159,18 +160,11 @@ class TransformFunction():
             loc = np.argmin(u-l)
             print(f'Min of upper - lower: {u[loc]-l[loc]:.3f}')
             print(f'where upper is {u[loc]:.3f} and lower is {l[loc]:.3f}')
-            print('The empirical observations: ')
-            print(x_obs)
+            print('The empirical unique observations: ')
+            print(np.unique(x_obs))
+            print('To be transformed unique values: ')
+            print(np.unique(x_to_transform[~missing]))
             raise ValueError
-
-#        try:
-#        except Exception as e:
-#            print(x_obs)
-#            print(x_to_transform[~missing])
-#            print(l)
-#            print(u)
-#            print(e)
-#            raise
 
         lower[~missing], upper[~missing] = l, u
         lower[missing], upper[missing] = np.nan, np.nan
@@ -258,8 +252,9 @@ class TransformFunction():
         x_obs = x_obs[~np.isnan(x_obs)]
         unique = np.sort(np.unique(x_obs))
         _max, _min = unique[-1], unique[0]
+        l = len(unique)
         assert _max > _min
-        assert len(unique)>1, 'Each ordinal variable must have at least two unique observations'
+        assert l>1, 'Each ordinal variable must have at least two unique observations'
         if cdf_type == 'empirical':
             func = ECDF(x_obs)
             threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
@@ -278,6 +273,19 @@ class TransformFunction():
             x[x>_max] = _max
             # from obs to scores
             lower, upper = func(x-threshold), func(x+threshold)
+            # on unobserved index
+            index = np.flatnonzero(lower == upper)
+            for i in index:
+                _i = bisect(unique, x[i])
+                if _i==0 or _i>=l:
+                    print(f'unique values: {unique}')
+                    print(f'unobserved value: {x[i]}')
+                    print(f'bisect index: {_i}')
+                    raise ValueError
+                lower[i] = func(unique[_i-1])
+                upper[i] = func(unique[_i])
+
+            # 
             lower, upper = norm.ppf(lower), norm.ppf(upper)
             return lower, upper
 

@@ -21,7 +21,8 @@ setup(
         'scipy',
         'statsmodels',
         'tqdm',
-        'importlib_resources'
+        'importlib_resources',
+        'bisect'
     ],
     include_package_data=True,
     package_data = {'gcimpute':['data/*.csv']},
