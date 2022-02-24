@@ -155,7 +155,7 @@ class TransformFunction():
         f_marginal = self._marginal_ord_est(x_obs = x_obs, cdf_type=cdf_type)
         l, u = f_marginal(x_to_transform[~missing])
 
-        if (u-l).min()<=0:
+        if len(l)>0 and (u-l).min()<=0:
             print('Invalid lower & upper bounds for ordinal')
             loc = np.argmin(u-l)
             print(f'Min of upper - lower: {u[loc]-l[loc]:.3f}')
@@ -253,8 +253,8 @@ class TransformFunction():
         unique = np.sort(np.unique(x_obs))
         _max, _min = unique[-1], unique[0]
         l = len(unique)
-        assert _max > _min
         assert l>1, 'Each ordinal variable must have at least two unique observations'
+        assert _max > _min
         if cdf_type == 'empirical':
             func = ECDF(x_obs)
             threshold = np.min(np.abs(unique[1:] - unique[:-1]))/2.0
