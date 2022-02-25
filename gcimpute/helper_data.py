@@ -2,6 +2,7 @@ import numpy as np
 from scipy.stats import random_correlation, norm, expon
 from importlib_resources import files
 import pandas as pd
+from functools import partial
 
 def _cont_to_ord(x, k, rng, by = 'dist', qmin=0.05, qmax=0.95):
     """

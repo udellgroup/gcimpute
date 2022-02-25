@@ -4,6 +4,7 @@ from scipy.linalg import svdvals
 import warnings
 warnings.filterwarnings("error")
 from collections import defaultdict
+from functools import partial
 
 def get_mae(x_imp, x_true, x_obs=None):
     """
@@ -116,6 +117,29 @@ def batch_iterable(X, batch_size=40):
         end = min(start + batch_size, n)
         yield X[start:end]
         start = end
+
+def get_error_batch(x_imp, x_true, x_obs, batch_size = 40, error_type = 'RMSE'):
+    '''
+    Compute IMPUTATION ERROR in the unit of a mini-batch
+    '''
+    x_imp = np.asarray(x_imp)
+    x_true = np.asarray(x_true)
+    x_obs = np.asarray(x_obs)
+
+    if error_type == 'RMSE':
+        get_error = partial(get_rmse, relative=False)
+    elif error_type == 'NRMSE':
+        get_error = partial(get_rmse, relative=True)
+    elif error_type == 'MAE':
+        get_error = get_mae
+    else:
+        raise ValueError
+
+    result = []
+    for imp, true, obs in zip(batch_iterable(x_imp,batch_size), batch_iterable(x_true,batch_size), batch_iterable(x_obs,batch_size)):
+        result.append(get_error(imp, true, obs))
+
+    return result
 
 def get_smae_batch(x_imp, x_true, x_obs, 
                    batch_size = 40,
