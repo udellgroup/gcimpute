@@ -691,7 +691,7 @@ class GaussianCopula():
         X_imp = self.transform()
         return X_imp
 
-    def fit_offline(self, X, first_fit=True, max_iter=None, convergence_verbose=True):
+    def fit_offline(self, X, first_fit=True, max_iter=None, convergence_verbose=True, fit_cov=True):
         '''
         Implement fit when the training mode is 'standard' or 'minibatch-offline'
 
@@ -718,12 +718,13 @@ class GaussianCopula():
             Z[np.isnan(X)] = np.nan
 
         # estimate copula correlation matrix
-        Z_imp, C_ord = self._fit_covariance(Z, Z_ord_lower, Z_ord_upper, 
-            first_fit=first_fit, max_iter=max_iter, convergence_verbose=convergence_verbose)
+        if fit_cov:
+            Z_imp, C_ord = self._fit_covariance(Z, Z_ord_lower, Z_ord_upper, 
+                first_fit=first_fit, max_iter=max_iter, convergence_verbose=convergence_verbose)
 
-        # attributes to store after model fitting
-        self._latent_Zimp = Z_imp
-        self._latent_Cord = C_ord
+            # attributes to store after model fitting
+            self._latent_Zimp = Z_imp
+            self._latent_Cord = C_ord
 
         # attributes to store for additional training
         self._Z_ord_lower = Z_ord_lower
@@ -1045,7 +1046,7 @@ class GaussianCopula():
             corrudpate = self._get_scaled_diff(prev_corr, self._corr)
             self.corrupdate.append(corrudpate)
             if self._verbose>0:
-                print(f"Iteration {self._iter}: copula parameter change {corrudpate:.4f}, likelihood {iterloglik:.4f}")
+                print(f"Iter {self._iter}: copula parameter change {corrudpate:.4f}, likelihood {iterloglik:.4f}")
             
             # append new likelihood
             self.likelihood.append(iterloglik)
