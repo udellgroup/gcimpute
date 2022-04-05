@@ -499,27 +499,21 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
         
         for _ in range(num_ord_updates):
             sigma_obs_obs_inv_Zobs_row = sigma_obs_obs_inv_Zobs_row_func(z_row[obs_indices])
-            # TO DO: accelerate is possible. Replace the for-loop with vector/matrix computation.
             # Essentially, replace the Gauss-Seidel style update with a Jacobi style update for the nonlinear system
             # ord_obs_iter has sum(ord_obs_indices) entries, ord_in_obs has sum(ord_obs_indices[obs_indices]).
             # Provided the True entries in ord_obs_indices are all in obs_indices,
             # ord_obs_iter and ord_in_obs have the same length
-            for j_in_ord, j_in_obs, j in zip(obs_in_ord_iter, ord_in_obs_iter, ord_obs_iter):
-                # j is the location in the p-dim coordinate
-                # j_in_obs is the location of j in the obs-dim coordinate
-                # j_in_ord is the lcoation of j in the ord-dim coordinate
-                new_var_ij = 1.0/sigma_obs_obs_inv_diag[j_in_obs]
-                new_std_ij = np.sqrt(new_var_ij)
-                new_mean_ij = z_row[j] - new_var_ij*sigma_obs_obs_inv_Zobs_row[j_in_obs]
-                a_ij = r_lower_row[j_in_ord] 
-                b_ij = r_upper_row[j_in_ord]
-                try:
-                    _mean, _std = get_truncnorm_moments(a = a_ij, b= b_ij, mu = new_mean_ij, std = new_std_ij)
-                    if np.isfinite(_std) and _std>0:
-                        var_ordinal[j] = _std**2
-                    if np.isfinite(_mean):
-                        z_row[j] = _mean
-                except RuntimeWarning:
-                    #print(f'Bad truncated normal stats: lower {r_lower_row[j]}, upper {r_upper_row[j]}, a {a_ij}, b {b_ij}, mean {new_mean_ij}, std {new_std_ij}')
-                    truncnorm_warn = True
+            new_std = np.sqrt(1.0/sigma_obs_obs_inv_diag[ord_in_obs_iter])
+            new_mean = z_row[ord_obs_iter] - new_std * sigma_obs_obs_inv_Zobs_row[ord_in_obs_iter]
+            a, b = r_lower_row[obs_in_ord_iter], r_upper_row[obs_in_ord_iter]  
+            out =  get_truncnorm_moments_vec(a = a, b= b, mu = new_mean, std = new_std)
+            _mean, _std =  out['mean'], out['std']
+            old_mean, old_std = z_row[ord_obs_iter], var_ordinal[ord_obs_iter]
+            loc  = ~np.isfinite(_mean)
+            _mean[loc] = old_mean[loc]
+            z_row[ord_obs_iter] = _mean
+            loc  = ~np.isfinite(_std)
+            _std[loc] = 0
+            var_ordinal[ord_obs_iter] = _std**2
+
     return z_row, var_ordinal, truncnorm_warn
