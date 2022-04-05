@@ -1,7 +1,28 @@
 import numpy as np
 from scipy.stats import norm
 
+a1 =  0.254829592
+a2 = -0.284496736
+a3 =  1.421413741
+a4 = -1.453152027
+a5 =  1.061405429
+erf_p  =  0.3275911
 
+def erf(x):
+    # save the sign of x
+    sign = 2 * (x>=0) -1 
+    x = np.abs(x)
+
+    # A&S formula 7.1.26
+    t = 1/(1+erf_p*x)
+    y = 1.0 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t*np.exp(-x*x)
+    return sign*y # erf(-x) = -erf(x)
+
+def norm_cdf(x):
+    return (1.0 + erf(x / np.sqrt(2.0))) / 2.0
+
+def norm_pdf(x):
+    return np.exp(-np.power(x,2)/2) / np.sqrt(2 * np.pi)
 
 def get_truncnorm_moments(a,b,mu,std,tol=1e-6, mean_only=False):
     alpha, beta = (a-mu)/std, (b-mu)/std
@@ -31,7 +52,7 @@ def get_truncnorm_moments_vec(a,b,mu,std,tol=1e-6, mean_only=False):
     a,b,mu,std = np.array(a), np.array(b), np.array(mu), np.array(std)
     alpha, beta = (a-mu)/std, (b-mu)/std
 
-    Z = norm.cdf(beta) - norm.cdf(alpha)
+    Z = norm_cdf(beta) - norm_cdf(alpha)
     assert np.isfinite(Z).all() and Z.min()>=0, f'Z is {Z}'
     work_loc = np.flatnonzero((Z>tol) & (Z<1))
     trivial_loc = Z==1
@@ -46,7 +67,7 @@ def get_truncnorm_moments_vec(a,b,mu,std,tol=1e-6, mean_only=False):
 
     out = {}
 
-    pdf_beta, pdf_alpha = norm.pdf(beta_work), norm.pdf(alpha_work)
+    pdf_beta, pdf_alpha = norm_pdf(beta_work), norm_pdf(alpha_work)
     assert np.isfinite(pdf_alpha).all(), f'pdf_alpha is {pdf_alpha}'
     assert np.isfinite(pdf_beta).all(), f'pdf_beta is {pdf_beta}'
     r1 = (pdf_beta - pdf_alpha) / Z_work
