@@ -17,6 +17,8 @@ def get_mae(x_imp, x_true, x_obs=None):
         loc = np.isnan(x_obs) & (~np.isnan(x_true))
     else:
         loc = ~np.isnan(x_true)
+    if not loc.any():
+        raise ValueError('empty evaluation location')
     diff = x_imp[loc] - x_true[loc]
     return np.mean(np.abs(diff))
 
@@ -46,6 +48,8 @@ def get_rmse(x_imp, x_true, x_obs = None, relative=False):
     else:
         loc = ~np.isnan(x_true)
     diff = x_imp[loc] - x_true[loc]
+    if not loc.any():
+        raise ValueError('empty evaluation location')
     #mse = np.mean(diff**2.0, axis=0)
     mse = np.mean(np.power(diff, 2))
     rmse = np.sqrt(mse)
