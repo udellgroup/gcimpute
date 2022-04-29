@@ -380,7 +380,7 @@ class LowRankGaussianCopula(GaussianCopula):
         num_ord_updates = self._num_ord_updates
 
         rank = W.shape[1]
-        num_ord = r_lower.shape[1]
+        num_ord = Z_ord_lower.shape[1]
         U,d,V = np.linalg.svd(W, full_matrices=False)
 
         has_truncation = self.has_truncation()

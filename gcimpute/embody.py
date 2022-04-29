@@ -392,7 +392,9 @@ def _LRGC_latent_operation_row(task, Z_row, r_lower_row, r_upper_row, U, d, sigm
 
     if task == 'fillup':
         out_dict['var_ordinal'] = var_ordinal
-        out_dict['Z_imp'] = np.dot(U[missing_indices,:], si)
+        Z_imp_row = Z_row.copy()
+        Z_imp_row[missing_indices] = np.dot(U[missing_indices,:], si)
+        out_dict['Z_imp'] = Z_imp_row
     elif task == 'sample':
         np.random.seed(seed)
         Ui_mis = U[missing_indices,:]
