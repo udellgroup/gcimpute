@@ -5,7 +5,7 @@ with open('README.md') as f:
 
 setup(
     name='gcimpute',
-    version='0.0.1',
+    version='0.0.2',
     description='A missing value imputation algorithm using the Gaussian copula model',
     long_description=long_description,
     long_description_content_type='text/markdown',
