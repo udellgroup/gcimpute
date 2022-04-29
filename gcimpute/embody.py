@@ -1,5 +1,6 @@
 import numpy as np
 from .truncnorm_comp import *
+new_ord_update = True
 
 def _latent_operation_body_(args):
     """
@@ -504,7 +505,7 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
             # Provided the True entries in ord_obs_indices are all in obs_indices,
             # ord_obs_iter and ord_in_obs have the same length
             new_std = np.sqrt(1.0/sigma_obs_obs_inv_diag[ord_in_obs_iter])
-            new_mean = z_row[ord_obs_iter] - new_std * sigma_obs_obs_inv_Zobs_row[ord_in_obs_iter]
+            new_mean = z_row[ord_obs_iter] - (new_std**2) * sigma_obs_obs_inv_Zobs_row[ord_in_obs_iter]
             a, b = r_lower_row[obs_in_ord_iter], r_upper_row[obs_in_ord_iter]  
             out =  get_truncnorm_moments_vec(a = a, b= b, mu = new_mean, std = new_std)
             _mean, _std =  out['mean'], out['std']
@@ -515,5 +516,21 @@ def _update_z_row_ord(z_row, r_lower_row, r_upper_row,
             loc  = ~np.isfinite(_std)
             _std[loc] = 0
             var_ordinal[ord_obs_iter] = _std**2
+            ''' archived old slow implementation
+            for j_in_ord, j_in_obs, j in zip(obs_in_ord_iter, ord_in_obs_iter, ord_obs_iter):
+                # j is the location in the p-dim coordinate
+                # j_in_obs is the location of j in the obs-dim coordinate
+                # j_in_ord is the lcoation of j in the ord-dim coordinate
+                new_var_ij = 1.0/sigma_obs_obs_inv_diag[j_in_obs]
+                new_std_ij = np.sqrt(new_var_ij)
+                new_mean_ij = z_row[j] - new_var_ij* sigma_obs_obs_inv_Zobs_row[j_in_obs]
+                a_ij, b_ij = r_lower_row[j_in_ord], r_upper_row[j_in_ord]
+                #_mean, _var = truncnorm.stats(a=a_ij,b=b_ij,loc=new_mean_ij,scale=new_std_ij,moments='mv')
+                _mean, _std = get_truncnorm_moments(a = a_ij, b = b_ij, mu = new_mean_ij, std = new_std_ij)
+                if np.isfinite(_std) and _std>0:
+                    var_ordinal[j] = _std**2
+                if np.isfinite(_mean):
+                    z_row[j] = _mean
+            '''
 
     return z_row, var_ordinal, truncnorm_warn

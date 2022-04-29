@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.stats import norm
+import warnings
 
 a1 =  0.254829592
 a2 = -0.284496736
@@ -48,7 +49,7 @@ def get_truncnorm_moments(a,b,mu,std,tol=1e-6, mean_only=False):
     _std = std * np.sqrt(1 - r2 - (r1**2)) 
     return _mean, _std
 
-def get_truncnorm_moments_vec(a,b,mu,std,tol=1e-6, mean_only=False):
+def get_truncnorm_moments_vec(a,b,mu,std,tol=1e-6, mean_only=False, warn_tol=-1e-4):
     a,b,mu,std = np.array(a), np.array(b), np.array(mu), np.array(std)
     alpha, beta = (a-mu)/std, (b-mu)/std
 
@@ -101,7 +102,13 @@ def get_truncnorm_moments_vec(a,b,mu,std,tol=1e-6, mean_only=False):
         for name, loc in loc_dict.items():
             abs_loc = work_loc[loc]
             if any(loc):
-                _std[abs_loc] = std[abs_loc] * np.sqrt(1 - r2_dict[name] - (r1[loc]**2))
+                s = 1 - r2_dict[name] - (r1[loc]**2)
+                if s.min()<0:
+                    if s.min()<warn_tol:
+                        m = f'Negative turnc std: {s.min()}'
+                        warnings.warn(m)
+                    s[s<0] = 0
+                _std[abs_loc] = std[abs_loc] * np.sqrt(s)
         _std[fail_loc] = np.inf
         _std[trivial_loc] = std[trivial_loc]
 

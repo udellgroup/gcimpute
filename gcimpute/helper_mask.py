@@ -69,8 +69,6 @@ def split_mask_val_test(X_mask, X, val_ratio = 0.5, rng = None, seed = 1):
     n = len(mask_coors)
     index_val = rng.choice(np.arange(n), size=int(n*val_ratio), replace=False)
     index_test = np.setdiff1d(np.arange(n), index_val)
-    X_val = X_mask.copy()
-    X_test = X_mask.copy()
     r = {'validation':X_mask.copy(), 'test':X_mask.copy()}
     loc = {'validation':index_val, 'test':index_test}
     for name,v in loc.items():
