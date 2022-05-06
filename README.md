@@ -43,6 +43,10 @@ print(f'The SMAE across boolean variables: mean {smae[10:].mean():.3f} and std {
 More detailed examples are available under directory Examples. Especially, the [main tutorial](https://github.com/udellgroup/gcimpute/blob/master/Examples/Main_Tutorial.ipynb) covers most functions' usage, and thus is a must-read if you are using our software for the first time.
 
 ## News
+*05-06-2022*
+
+The up-to-date version (0.0.2 on PyPI) achieves significant speed improvement when there are many ordinal variables. Strongly recommend an update if you are an early user!
+
 *02-13-2022*
 
 Our software went through a few name and structural changes. It was previously named *online_gc_imp* and then *GaussianCopulaImp*. The current name *gcimpute* is our final pick. The structural changes are substantial: we improved the code quality and the user interface. It now has an interface consistent with `sklearn.impute`. If you are an early user of our software, you may find your codes using our software no longer work after updating to our current release. We greatly appreciate your interest in our work and sincerely apologize for any inconvenience you may experience. The [notebook](https://github.com/udellgroup/gcimpute/blob/master/Examples/Main_Tutorial.ipynb) will help you quickly modify your codes to use our current release.

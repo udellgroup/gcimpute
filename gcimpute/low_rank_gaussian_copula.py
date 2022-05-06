@@ -162,6 +162,8 @@ class LowRankGaussianCopula(GaussianCopula):
         """
         See the doc for _fit_covariance in class GaussianCopula()
         """
+        if self._rank >= Z.shape[1]:
+            raise ValueError('The provided rank must be smaller than the data dimension')
         if first_fit:
             Z_imp = self._init_copula_corr(Z, Z_ord_lower, Z_ord_upper)
             # Form latent variable matrix: Update entries at obseved ordinal locations from SVD initialization
