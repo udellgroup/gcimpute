@@ -16,14 +16,15 @@ setup(
     maintainer = 'Yuxuan Zhao',
     maintainer_email = 'yz2295@cornell.edu',
     install_requires=[
-        'numpy',
-        'pandas',
-        'scipy',
-        'statsmodels',
-        'tqdm',
+        'numpy>=1.16.4',
+        'pandas>=0.24.2',
+        'scipy>=1.4.1',
+        'statsmodels>=0.11.0',
+        'tqdm>=4.42.1',
         'importlib_resources'
     ],
     include_package_data=True,
     package_data = {'gcimpute':['data/*.csv']},
-    license = 'MIT'
+    license = 'MIT',
+    python_requires=">=3.7"
 )
