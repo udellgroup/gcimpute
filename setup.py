@@ -5,7 +5,7 @@ with open('README.md') as f:
 
 setup(
     name='gcimpute',
-    version='0.0.2',
+    version='0.0.3',
     description='A missing value imputation algorithm using the Gaussian copula model',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -21,8 +21,7 @@ setup(
         'scipy',
         'statsmodels',
         'tqdm',
-        'importlib_resources',
-        'bisect'
+        'importlib_resources'
     ],
     include_package_data=True,
     package_data = {'gcimpute':['data/*.csv']},
